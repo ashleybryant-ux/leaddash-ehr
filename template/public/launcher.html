@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LeadDash EHR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #0e4429 0%, #155F3C 50%, #1a7a4c 100%);
+      color: #333;
+    }
+    
+    .container {
+      background: white;
+      padding: 48px 56px;
+      border-radius: 20px;
+      box-shadow: 0 25px 80px rgba(0, 0, 0, 0.3);
+      text-align: center;
+      max-width: 420px;
+      width: 90%;
+    }
+    
+    .logo-container {
+      margin-bottom: 32px;
+    }
+    
+    .logo {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    
+    .logo .lead {
+      color: #155F3C;
+    }
+    
+    .logo .dash {
+      color: #ff914c;
+    }
+    
+    .logo .ehr {
+      font-weight: 600;
+      margin-left: 6px;
+      padding: 2px 10px;
+      background: #155F3C;
+      color: white;
+      border-radius: 6px;
+      font-size: 24px;
+      vertical-align: middle;
+    }
+    
+    .subtitle {
+      font-size: 14px;
+      color: #9ca3af;
+      margin-top: 8px;
+      font-weight: 400;
+    }
+    
+    .spinner {
+      width: 56px;
+      height: 56px;
+      border: 4px solid #e5e7eb;
+      border-top: 4px solid #155F3C;
+      border-right: 4px solid #ff914c;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin: 0 auto 28px;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .status {
+      font-size: 16px;
+      color: #374151;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    
+    .user-info {
+      font-size: 14px;
+      color: #155F3C;
+      margin-top: 6px;
+      font-weight: 500;
+    }
+    
+    .error-container {
+      display: none;
+    }
+    
+    .error-container.show {
+      display: block;
+    }
+    
+    .error-icon {
+      width: 64px;
+      height: 64px;
+      background: #fef2f2;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 32px;
+      color: #dc2626;
+    }
+    
+    .error-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #dc2626;
+      margin-bottom: 12px;
+    }
+    
+    .error-message {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 28px;
+      line-height: 1.6;
+    }
+    
+    .retry-btn {
+      background: #155F3C;
+      color: white;
+      border: none;
+      padding: 14px 36px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+      font-family: 'Poppins', sans-serif;
+    }
+    
+    .retry-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(21, 95, 60, 0.4);
+      background: #1a7a4c;
+    }
+    
+    .retry-btn:active {
+      transform: translateY(0);
+    }
+    
+    .loading-container {
+      display: block;
+    }
+    
+    .loading-container.hide {
+      display: none;
+    }
+    
+    .steps {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #e5e7eb;
+    }
+    
+    .step {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      font-size: 13px;
+      color: #9ca3af;
+      margin-bottom: 8px;
+    }
+    
+    .step.active {
+      color: #155F3C;
+      font-weight: 500;
+    }
+    
+    .step.completed {
+      color: #155F3C;
+    }
+    
+    .step-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid currentColor;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
+    
+    .step.completed .step-icon {
+      background: #155F3C;
+      border-color: #155F3C;
+      color: white;
+    }
+    
+    .step.active .step-icon {
+      border-color: #ff914c;
+      color: #ff914c;
+      animation: pulse 1.5s infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .debug-info {
+      margin-top: 24px;
+      padding: 16px;
+      background: #f9fafb;
+      border-radius: 10px;
+      font-size: 11px;
+      color: #6b7280;
+      text-align: left;
+      display: none;
+      border: 1px solid #e5e7eb;
+    }
+    
+    .debug-info.show {
+      display: block;
+    }
+    
+    .debug-info strong {
+      color: #374151;
+    }
+    
+    .debug-info code {
+      display: block;
+      margin-top: 8px;
+      word-break: break-all;
+      font-family: 'Monaco', 'Consolas', monospace;
+      font-size: 10px;
+      background: #f3f4f6;
+      padding: 8px;
+      border-radius: 6px;
+    }
+
+    .logo-img {
+      height: 40px;
+      width: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo-container">
+      <div class="logo">
+        <span class="lead">LEAD</span><span class="dash">DASH</span><span class="ehr">EHR</span>
+      </div>
+      <div class="subtitle">Electronic Health Records</div>
+    </div>
+    
+    <!-- Loading State -->
+    <div class="loading-container" id="loadingContainer">
+      <div class="spinner"></div>
+      <div class="status" id="statusText">Initializing...</div>
+      <div class="user-info" id="userInfo"></div>
+      
+      <div class="steps">
+        <div class="step" id="step1">
+          <span class="step-icon">1</span>
+          <span>Verifying credentials</span>
+        </div>
+        <div class="step" id="step2">
+          <span class="step-icon">2</span>
+          <span>Securing session</span>
+        </div>
+        <div class="step" id="step3">
+          <span class="step-icon">3</span>
+          <span>Loading your dashboard</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Error State -->
+    <div class="error-container" id="errorContainer">
+      <div class="error-icon">!</div>
+      <div class="error-title" id="errorTitle">Unable to Load EHR</div>
+      <div class="error-message" id="errorMessage">
+        There was a problem connecting to the EHR system. Please try again.
+      </div>
+      <button class="retry-btn" onclick="location.reload()">Try Again</button>
+    </div>
+    
+    <!-- Debug Info (hidden by default) -->
+    <div class="debug-info" id="debugInfo">
+      <strong>Debug Info:</strong>
+      <code id="debugContent"></code>
+    </div>
+  </div>
+
+  <script>
+    // =============================================
+    // CONFIGURATION - UPDATE THESE VALUES!
+    // =============================================
+    
+    // Your Cloudflare Worker URL that generates signed SSO URLs
+    const SSO_WORKER_URL = 'https://YOUR-WORKER-NAME.YOUR-ACCOUNT.workers.dev';
+    
+    // Your EHR server's SSO endpoint
+    const EHR_BASE_URL = 'https://ehr.leaddash.io';
+    
+    // Set to true to see debug information on errors
+    const DEBUG_MODE = false;
+    
+    // =============================================
+    // DO NOT MODIFY BELOW THIS LINE
+    // =============================================
+    
+    const loadingContainer = document.getElementById('loadingContainer');
+    const errorContainer = document.getElementById('errorContainer');
+    const statusText = document.getElementById('statusText');
+    const userInfo = document.getElementById('userInfo');
+    const errorTitle = document.getElementById('errorTitle');
+    const errorMessage = document.getElementById('errorMessage');
+    const debugInfo = document.getElementById('debugInfo');
+    const debugContent = document.getElementById('debugContent');
+    const step1 = document.getElementById('step1');
+    const step2 = document.getElementById('step2');
+    const step3 = document.getElementById('step3');
+
+    function showError(title, message, debugData = null) {
+      loadingContainer.classList.add('hide');
+      errorContainer.classList.add('show');
+      errorTitle.textContent = title;
+      errorMessage.textContent = message;
+      
+      if (DEBUG_MODE && debugData) {
+        debugInfo.classList.add('show');
+        debugContent.textContent = JSON.stringify(debugData, null, 2);
+      }
+    }
+
+    function updateStatus(text) {
+      statusText.textContent = text;
+    }
+
+    function setStep(stepNum) {
+      [step1, step2, step3].forEach((step, i) => {
+        step.classList.remove('active', 'completed');
+        if (i + 1 < stepNum) {
+          step.classList.add('completed');
+          step.querySelector('.step-icon').textContent = '✓';
+        } else if (i + 1 === stepNum) {
+          step.classList.add('active');
+        }
+      });
+    }
+
+    async function initSSO() {
+      try {
+        setStep(1);
+        updateStatus('Verifying your credentials...');
+        
+        const params = new URLSearchParams(window.location.search);
+        
+        const locationId = params.get('locationId');
+        const userId = params.get('userId');
+        const userEmail = params.get('userEmail') || params.get('email') || '';
+        const userName = params.get('userName') || params.get('name') || '';
+        const userType = params.get('userType') || params.get('role') || '';
+        
+        if (!locationId) {
+          showError(
+            'Missing Location',
+            'Unable to identify your practice location. Please try accessing the EHR from LeadDash again.',
+            { params: Object.fromEntries(params) }
+          );
+          return;
+        }
+        
+        if (!userId) {
+          showError(
+            'Missing User ID',
+            'Unable to identify your user account. Please try accessing the EHR from LeadDash again.',
+            { params: Object.fromEntries(params) }
+          );
+          return;
+        }
+        
+        if (userName) {
+          userInfo.textContent = `Welcome back, ${userName}`;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 600));
+        
+        setStep(2);
+        updateStatus('Securing your session...');
+        
+        if (SSO_WORKER_URL.includes('YOUR-WORKER-NAME')) {
+          showError(
+            'Configuration Required',
+            'The SSO service has not been configured. Please contact your administrator.',
+            { error: 'SSO_WORKER_URL not set' }
+          );
+          return;
+        }
+        
+        const response = await fetch(SSO_WORKER_URL, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            locationId,
+            userId,
+            userEmail,
+            userName,
+            userType,
+            baseUrl: `${EHR_BASE_URL}/auth/sso`
+          })
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          showError(
+            'Authentication Failed',
+            'Unable to authenticate with the EHR system. Please try again or contact support.',
+            { status: response.status, error: errorText }
+          );
+          return;
+        }
+        
+        const data = await response.json();
+        
+        if (!data.success || !data.ssoUrl) {
+          showError(
+            'Authentication Failed',
+            data.error || 'Unable to generate secure session. Please try again.',
+            data
+          );
+          return;
+        }
+        
+        setStep(3);
+        updateStatus('Loading your dashboard...');
+        
+        await new Promise(resolve => setTimeout(resolve, 400));
+        
+        window.location.href = data.ssoUrl;
+        
+      } catch (error) {
+        console.error('SSO Error:', error);
+        
+        showError(
+          'Connection Error',
+          'Unable to connect to the authentication service. Please check your internet connection and try again.',
+          { error: error.message, stack: error.stack }
+        );
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', initSSO);
+    
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      setTimeout(initSSO, 100);
+    }
+  </script>
+</body>
+</html>

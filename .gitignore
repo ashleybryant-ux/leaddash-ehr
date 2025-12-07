@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment files - SECRETS
+.env
+.env.*
+*.pem
+*.key
+
+# GHL API Keys
+location-keys.json
+
+# PHI (Patient Health Information)
+admin-notes.json
+audit-logs.json
+claim-drafts.json
+clinical-notes.json
+insurance-claims.json
+patient-files.json
+patient-payments.json
+note-drafts.json
+user-access-logs.json
+invoice-service-dates.json
+allowed-locations.json
+fee-schedules.json
+custom-payers.json
+
+# Uploaded files
+uploads/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+# Backend folder data
+backend/location-keys.json
+backend/notes-data.json
+backend/data/
+*.db
+*.db-shm
+*.db-wal
