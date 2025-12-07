@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
 // ============================================
 // DEV MODE BYPASS - Set to false before deploying!
 // ============================================
-const DEV_BYPASS_AUTH = true;
+const DEV_BYPASS_AUTH = false;
 
 // ============================================
 // Types
@@ -65,6 +65,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [isInIframe] = useState(checkIsInIframe);
   const [isFromGHL] = useState(checkIsFromGHL);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const navigate = useNavigate();
 
@@ -97,21 +98,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       // ========== END DEV BYPASS ==========
 
+      // Check for token in URL (from SSO redirect)
+      const tokenFromUrl = searchParams.get('token');
+      let authToken = localStorage.getItem('authToken');
+
+      if (tokenFromUrl) {
+        // Store the new token
+        authToken = tokenFromUrl;
+        localStorage.setItem('authToken', tokenFromUrl);
+        
+        // Clean up URL
+        searchParams.delete('token');
+        setSearchParams(searchParams, { replace: true });
+      }
+
+      if (!authToken) {
+        // No token available - redirect to access denied
+        setUser(null);
+        if (!window.location.pathname.includes('access-denied')) {
+          navigate('/access-denied?reason=no_token');
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      // Call /api/auth/me with the token
       const response = await fetch(`${API_URL}/api/auth/me`, {
-        credentials: 'include',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
       });
 
       const data = await response.json();
 
       if (data.authenticated && data.user) {
-        setUser(data.user);
-        localStorage.setItem('userId', data.user.userId);
-        localStorage.setItem('userName', data.user.userName);
-        localStorage.setItem('userEmail', data.user.userEmail);
-        localStorage.setItem('userType', data.user.userType);
-        localStorage.setItem('locationId', data.user.locationId);
+        const authenticatedUser: User = {
+          userId: data.user.userId || data.user.id,
+          userEmail: data.user.email || '',
+          userName: data.user.name || 'User',
+          userType: data.user.role || 'user',
+          locationId: data.user.locationId || '',
+        };
+        
+        setUser(authenticatedUser);
+        localStorage.setItem('userId', authenticatedUser.userId);
+        localStorage.setItem('userName', authenticatedUser.userName);
+        localStorage.setItem('userEmail', authenticatedUser.userEmail);
+        localStorage.setItem('userType', authenticatedUser.userType);
+        localStorage.setItem('locationId', authenticatedUser.locationId);
+        localStorage.setItem('isAdmin', authenticatedUser.userType === 'admin' ? 'true' : 'false');
       } else {
+        // Token invalid or expired
         setUser(null);
+        localStorage.removeItem('authToken');
         localStorage.removeItem('userId');
         localStorage.removeItem('userName');
         localStorage.removeItem('userEmail');
@@ -119,7 +159,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem('locationId');
         
         if (!window.location.pathname.includes('access-denied')) {
-          navigate('/access-denied?reason=' + (data.reason || 'not_authenticated'));
+          navigate('/access-denied?reason=' + (data.reason || 'invalid_token'));
         }
       }
     } catch (err) {
@@ -129,19 +169,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setIsLoading(false);
     }
-  }, [navigate]);
+  }, [navigate, searchParams, setSearchParams]);
 
   const logout = useCallback(async () => {
     try {
+      const authToken = localStorage.getItem('authToken');
       await fetch(`${API_URL}/api/auth/logout`, {
         method: 'POST',
-        credentials: 'include',
+        headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
       });
     } catch (err) {
       console.error('Logout failed:', err);
     }
 
     setUser(null);
+    localStorage.removeItem('authToken');
     localStorage.removeItem('userId');
     localStorage.removeItem('userName');
     localStorage.removeItem('userEmail');

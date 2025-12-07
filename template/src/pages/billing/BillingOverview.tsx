@@ -5,7 +5,7 @@ import { auditBillingView } from "../../services/auditService";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
 // DEV MODE - set to true to bypass authentication checks
-const DEV_MODE = true;
+const DEV_MODE = false;
 
 interface Invoice {
   _id?: string;
