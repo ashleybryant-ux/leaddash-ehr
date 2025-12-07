@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import axios from "axios";
 
@@ -48,6 +48,7 @@ interface ProgressNote {
 }
 
 const UserDashboard = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("User");
   const [todayAppointments, setTodayAppointments] = useState<Appointment[]>([]);
@@ -64,15 +65,49 @@ const UserDashboard = () => {
   });
 
   useEffect(() => {
-    const storedUserName = localStorage.getItem("userName") || "User";
-    setUserName(storedUserName);
-    fetchDashboardData();
+    initializeAuth();
   }, []);
+
+  const initializeAuth = async () => {
+    const tokenFromUrl = searchParams.get("token");
+    
+    if (tokenFromUrl) {
+      localStorage.setItem("authToken", tokenFromUrl);
+      
+      searchParams.delete("token");
+      setSearchParams(searchParams, { replace: true });
+      
+      try {
+        const response = await axios.get(`${API_URL}/api/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${tokenFromUrl}`
+          }
+        });
+        
+        if (response.data.user) {
+          const user = response.data.user;
+          localStorage.setItem("userName", user.name || "User");
+          localStorage.setItem("userId", user.userId || "");
+          localStorage.setItem("locationId", user.locationId || "");
+          localStorage.setItem("role", user.role || "user");
+          setUserName(user.name || "User");
+        }
+      } catch (error) {
+        console.error("Error fetching user info:", error);
+      }
+    } else {
+      const storedUserName = localStorage.getItem("userName") || "User";
+      setUserName(storedUserName);
+    }
+    
+    fetchDashboardData();
+  };
 
   const fetchDashboardData = async () => {
     setLoading(true);
     const locationId = localStorage.getItem("locationId");
     const userId = localStorage.getItem("userId");
+    const authToken = localStorage.getItem("authToken");
 
     if (!locationId) {
       console.error("No locationId found");
@@ -80,8 +115,9 @@ const UserDashboard = () => {
       return;
     }
 
+    const axiosConfig = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {};
+
     try {
-      // Get date ranges
       const today = new Date();
       const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
@@ -89,8 +125,8 @@ const UserDashboard = () => {
       endOfWeek.setDate(today.getDate() + 7);
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-      // Fetch appointments
       const appointmentsRes = await axios.get(`${API_URL}/api/appointments`, {
+        ...axiosConfig,
         params: {
           locationId,
           startTime: startOfDay.toISOString(),
@@ -100,13 +136,11 @@ const UserDashboard = () => {
 
       const allAppointments: Appointment[] = appointmentsRes.data.appointments || [];
 
-      // Filter today's appointments
       const todayAppts = allAppointments.filter((apt) => {
         const aptDate = new Date(apt.startTime);
         return aptDate >= startOfDay && aptDate <= endOfDay;
       }).sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 
-      // Filter upcoming appointments (excluding today)
       const upcomingAppts = allAppointments.filter((apt) => {
         const aptDate = new Date(apt.startTime);
         return aptDate > endOfDay;
@@ -115,8 +149,8 @@ const UserDashboard = () => {
       setTodayAppointments(todayAppts);
       setUpcomingAppointments(upcomingAppts);
 
-      // Fetch patients
       const patientsRes = await axios.get(`${API_URL}/api/patients`, {
+        ...axiosConfig,
         params: { locationId, limit: 500 },
       }).catch(() => ({ data: { patients: [] } }));
 
@@ -127,7 +161,6 @@ const UserDashboard = () => {
       });
       setPatients(patientMap);
 
-      // Calculate patient stats - only count patients assigned to current user
       const myPatients = patientsList.filter((p) => {
         return p.assignedTo === userId;
       });
@@ -138,49 +171,43 @@ const UserDashboard = () => {
         return addedDate >= startOfMonth;
       }).length;
 
-      // Fetch progress notes
       const notesRes = await axios.get(`${API_URL}/api/progress-notes`, {
+        ...axiosConfig,
         params: { locationId },
       }).catch(() => ({ data: { notes: [] } }));
 
       const allNotes: ProgressNote[] = notesRes.data.notes || [];
 
-      // Find past appointments that don't have a progress note
-      // Get all appointments from the past (before today)
       const pastApptsRes = await axios.get(`${API_URL}/api/appointments`, {
+        ...axiosConfig,
         params: {
           locationId,
-          startTime: new Date(today.getFullYear(), today.getMonth() - 1, 1).toISOString(), // Last month
-          endTime: startOfDay.toISOString(), // Before today
+          startTime: new Date(today.getFullYear(), today.getMonth() - 1, 1).toISOString(),
+          endTime: startOfDay.toISOString(),
         },
       }).catch(() => ({ data: { appointments: [] } }));
 
       const pastAppointments: Appointment[] = pastApptsRes.data.appointments || [];
       
-      // Filter to only showed/completed appointments that don't have a note
       const appointmentIdsWithNotes = new Set(
         allNotes.map((n) => n.appointmentId).filter(Boolean)
       );
       
-      // Also check by patient + date combination
       const noteDateKeys = new Set(
         allNotes.map((n) => `${n.patientId}_${new Date(n.sessionDate).toDateString()}`)
       );
 
-      const appointmentsNeedingNotes = pastAppointments
+      const needingNotes = pastAppointments
         .filter((apt) => {
-          // Only include showed/completed appointments
           const status = (apt.appointmentStatus || "").toLowerCase();
           if (status !== "showed" && status !== "completed" && status !== "confirmed") {
             return false;
           }
           
-          // Check if this appointment already has a note
           if (apt.id && appointmentIdsWithNotes.has(apt.id)) {
             return false;
           }
           
-          // Check if there's a note for this patient on this date
           const dateKey = `${apt.contactId}_${new Date(apt.startTime).toDateString()}`;
           if (noteDateKeys.has(dateKey)) {
             return false;
@@ -191,16 +218,15 @@ const UserDashboard = () => {
         .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
         .slice(0, 5);
 
-      setAppointmentsNeedingNotes(appointmentsNeedingNotes);
+      setAppointmentsNeedingNotes(needingNotes);
 
-      // Set stats
       setStats({
         totalPatients: myPatients.length,
         activePatients: myPatients.length,
         newPatientsThisMonth: newThisMonth,
         appointmentsToday: todayAppts.length,
         appointmentsThisWeek: allAppointments.length,
-        pendingNotes: appointmentsNeedingNotes.length,
+        pendingNotes: needingNotes.length,
       });
 
     } catch (error) {
@@ -211,12 +237,10 @@ const UserDashboard = () => {
   };
 
   const getPatientName = (apt: Appointment) => {
-    // Try contact embedded in appointment
     if (apt.contact) {
       const name = apt.contact.name || `${apt.contact.firstName || ""} ${apt.contact.lastName || ""}`.trim();
       if (name) return name;
     }
-    // Try patients map
     if (apt.contactId && patients[apt.contactId]) {
       const p = patients[apt.contactId];
       return p.name || `${p.firstName || ""} ${p.lastName || ""}`.trim() || "Client";
@@ -224,7 +248,7 @@ const UserDashboard = () => {
     return apt.contactName || "Client";
   };
 
-  const getVideoLink = (apt: Appointment) => {
+  const getVideoLink = (apt: Appointment): string | null => {
     if (apt.googleMeetLink) return apt.googleMeetLink;
     if (apt.zoomLink) return apt.zoomLink;
     if (apt.meetLink) return apt.meetLink;
@@ -278,7 +302,6 @@ const UserDashboard = () => {
   return (
     <div className="page-wrapper">
       <div className="content">
-        {/* Header */}
         <div className="d-flex align-items-center justify-content-between mb-4">
           <div>
             <h4 className="mb-1">{getGreeting()}, {userName.split(" ")[0]}!</h4>
@@ -301,7 +324,6 @@ const UserDashboard = () => {
           </div>
         ) : (
           <>
-            {/* Stats Cards */}
             <div className="row mb-4">
               <div className="col-md-3 col-sm-6 mb-3">
                 <div className="card h-100">
@@ -312,7 +334,7 @@ const UserDashboard = () => {
                       </div>
                       <div>
                         <h3 className="mb-0">{stats.appointmentsToday}</h3>
-                        <p className="text-muted mb-0 small">Today's Appointments</p>
+                        <p className="text-muted mb-0 small">Today&apos;s Appointments</p>
                       </div>
                     </div>
                   </div>
@@ -366,13 +388,12 @@ const UserDashboard = () => {
             </div>
 
             <div className="row">
-              {/* Today's Schedule */}
               <div className="col-lg-6 mb-4">
                 <div className="card h-100">
                   <div className="card-header d-flex align-items-center justify-content-between">
                     <h5 className="card-title mb-0">
                       <i className="ti ti-calendar-time me-2 text-primary"></i>
-                      Today's Schedule
+                      Today&apos;s Schedule
                     </h5>
                     <Link to="/calendar-view" className="btn btn-sm btn-outline-primary">
                       View Calendar
@@ -453,7 +474,6 @@ const UserDashboard = () => {
                 </div>
               </div>
 
-              {/* Upcoming Appointments */}
               <div className="col-lg-6 mb-4">
                 <div className="card h-100">
                   <div className="card-header d-flex align-items-center justify-content-between">
@@ -523,7 +543,6 @@ const UserDashboard = () => {
             </div>
 
             <div className="row">
-              {/* Pending Notes - Appointments that need a note */}
               <div className="col-lg-12 mb-4">
                 <div className="card h-100">
                   <div className="card-header d-flex align-items-center justify-content-between">
@@ -578,7 +597,6 @@ const UserDashboard = () => {
                       </div>
                     )}
                   </div>
-                  
                   <div className="card-footer bg-transparent">
                     <Link to="/calendar-view" className="btn btn-sm btn-outline-primary">
                       <i className="ti ti-calendar-plus me-1"></i>View Schedule
@@ -590,7 +608,6 @@ const UserDashboard = () => {
           </>
         )}
 
-        {/* Copyright Footer */}
         <div className="copyright-footer text-center py-4 mt-4">
           <p className="text-muted mb-0">
             © {new Date().getFullYear()} LeadDash EHR. All rights reserved.
@@ -605,12 +622,10 @@ const UserDashboard = () => {
         .spin {
           animation: spin 1s linear infinite;
         }
-        
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
-        
         .avatar-lg {
           width: 48px;
           height: 48px;
@@ -618,53 +633,42 @@ const UserDashboard = () => {
           align-items: center;
           justify-content: center;
         }
-        
         .bg-primary-light {
           background-color: rgba(13, 110, 253, 0.1);
         }
-        
         .bg-success-light {
           background-color: rgba(25, 135, 84, 0.1);
         }
-        
         .bg-info-light {
           background-color: rgba(13, 202, 240, 0.1);
         }
-        
         .bg-warning-light {
           background-color: rgba(255, 193, 7, 0.1);
         }
-        
         .card {
           border: none;
           box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
         }
-        
         .card-header {
           background: transparent;
           border-bottom: 1px solid #f1f1f1;
           padding: 1rem 1.25rem;
         }
-        
         .list-group-item {
           border-left: none;
           border-right: none;
           padding: 0.875rem 1.25rem;
         }
-        
         .list-group-item:first-child {
           border-top: none;
         }
-        
         .patient-name-link {
           transition: color 0.2s ease;
         }
-        
         .patient-name-link:hover {
           color: #0d6efd !important;
           text-decoration: underline !important;
         }
-        
         .copyright-footer {
           border-top: 1px solid #e9ecef;
           margin-top: 2rem;
