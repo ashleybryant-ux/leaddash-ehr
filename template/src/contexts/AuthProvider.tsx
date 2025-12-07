@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
@@ -65,11 +65,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [isInIframe] = useState(checkIsInIframe);
   const [isFromGHL] = useState(checkIsFromGHL);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const hasCheckedAuth = useRef(false);
 
   const navigate = useNavigate();
 
   const checkAuth = useCallback(async () => {
+    // Prevent multiple calls
+    if (hasCheckedAuth.current) return;
+    hasCheckedAuth.current = true;
+
     try {
       setIsLoading(true);
       setError(null);
@@ -98,30 +102,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       // ========== END DEV BYPASS ==========
 
-      // Check for token in URL (from SSO redirect)
-      const tokenFromUrl = searchParams.get('token');
+      // Check for token in URL (from SSO redirect) using URLSearchParams
+      const urlParams = new URLSearchParams(window.location.search);
+      const tokenFromUrl = urlParams.get('token');
       let authToken = localStorage.getItem('authToken');
 
       if (tokenFromUrl) {
+        console.log('🔑 Token found in URL');
         // Store the new token
         authToken = tokenFromUrl;
         localStorage.setItem('authToken', tokenFromUrl);
         
-        // Clean up URL
-        searchParams.delete('token');
-        setSearchParams(searchParams, { replace: true });
+        // Clean up URL without causing re-render
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, '', newUrl);
       }
 
       if (!authToken) {
+        console.log('❌ No auth token available');
         // No token available - redirect to access denied
         setUser(null);
+        setIsLoading(false);
         if (!window.location.pathname.includes('access-denied')) {
           navigate('/access-denied?reason=no_token');
         }
-        setIsLoading(false);
         return;
       }
 
+      console.log('🔐 Verifying token with backend...');
+      
       // Call /api/auth/me with the token
       const response = await fetch(`${API_URL}/api/auth/me`, {
         headers: {
@@ -131,15 +140,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       const data = await response.json();
+      console.log('📦 Auth response:', data);
 
       if (data.authenticated && data.user) {
         const authenticatedUser: User = {
           userId: data.user.userId || data.user.id,
-          userEmail: data.user.email || '',
-          userName: data.user.name || 'User',
-          userType: data.user.role || 'user',
+          userEmail: data.user.userEmail || data.user.email || '',
+          userName: data.user.userName || data.user.name || 'User',
+          userType: data.user.userType || data.user.role || 'user',
           locationId: data.user.locationId || '',
         };
+        
+        console.log('✅ User authenticated:', authenticatedUser.userName);
         
         setUser(authenticatedUser);
         localStorage.setItem('userId', authenticatedUser.userId);
@@ -149,6 +161,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('locationId', authenticatedUser.locationId);
         localStorage.setItem('isAdmin', authenticatedUser.userType === 'admin' ? 'true' : 'false');
       } else {
+        console.log('❌ Token invalid or expired');
         // Token invalid or expired
         setUser(null);
         localStorage.removeItem('authToken');
@@ -169,7 +182,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setIsLoading(false);
     }
-  }, [navigate, searchParams, setSearchParams]);
+  }, [navigate]);
 
   const logout = useCallback(async () => {
     try {
