@@ -102,25 +102,77 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       // ========== END DEV BYPASS ==========
 
-      // Check for token in URL (from SSO redirect) using URLSearchParams
+      // Check for SSO params in URL (from GHL iframe)
       const urlParams = new URLSearchParams(window.location.search);
+      const isSsoRequest = urlParams.get('sso') === 'true';
+      const locationId = urlParams.get('locationId');
+      const userId = urlParams.get('userId');
+      const userName = urlParams.get('userName');
+      const userEmail = urlParams.get('userEmail');
+      const userType = urlParams.get('userType');
+      
+      // Also check for token in URL (from redirect flow)
       const tokenFromUrl = urlParams.get('token');
       let authToken = localStorage.getItem('authToken');
 
-      if (tokenFromUrl) {
+      // Handle SSO request from GHL
+      if (isSsoRequest && locationId && userId) {
+        console.log('🔐 SSO Request detected, calling backend...');
+        
+        try {
+          const response = await fetch(`${API_URL}/api/auth/sso-login`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              locationId,
+              userId,
+              userName: userName || 'User',
+              userEmail: userEmail || '',
+              userType: userType || 'user',
+            }),
+          });
+          
+          const data = await response.json();
+          console.log('📦 SSO Login response:', data);
+          
+          if (data.success && data.token) {
+            authToken = data.token;
+            localStorage.setItem('authToken', data.token);
+            
+            // Clean up URL
+            window.history.replaceState({}, '', window.location.pathname);
+          } else {
+            console.log('❌ SSO Login failed:', data.error);
+            setUser(null);
+            setIsLoading(false);
+            if (!window.location.pathname.includes('access-denied')) {
+              navigate('/access-denied?reason=sso_failed');
+            }
+            return;
+          }
+        } catch (err) {
+          console.error('❌ SSO Login error:', err);
+          setUser(null);
+          setIsLoading(false);
+          if (!window.location.pathname.includes('access-denied')) {
+            navigate('/access-denied?reason=sso_error');
+          }
+          return;
+        }
+      }
+      
+      // Handle token from redirect flow
+      if (tokenFromUrl && !authToken) {
         console.log('🔑 Token found in URL');
-        // Store the new token
         authToken = tokenFromUrl;
         localStorage.setItem('authToken', tokenFromUrl);
-        
-        // Clean up URL without causing re-render
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, '', newUrl);
+        window.history.replaceState({}, '', window.location.pathname);
       }
 
       if (!authToken) {
         console.log('❌ No auth token available');
-        // No token available - redirect to access denied
         setUser(null);
         setIsLoading(false);
         if (!window.location.pathname.includes('access-denied')) {
@@ -162,7 +214,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('isAdmin', authenticatedUser.userType === 'admin' ? 'true' : 'false');
       } else {
         console.log('❌ Token invalid or expired');
-        // Token invalid or expired
         setUser(null);
         localStorage.removeItem('authToken');
         localStorage.removeItem('userId');
