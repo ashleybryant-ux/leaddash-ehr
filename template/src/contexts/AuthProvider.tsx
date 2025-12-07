@@ -23,6 +23,7 @@ interface AuthContextType {
   isInIframe: boolean;
   isFromGHL: boolean;
   error: string | null;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
   getUserId: () => string | null;
@@ -57,6 +58,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const getUserId = useCallback((): string | null => {
     return user?.id || null;
   }, [user]);
+
+  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
+    try {
+      setError(null);
+      const response = await fetch(API_URL + '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success && data.token) {
+        localStorage.setItem('authToken', data.token);
+        
+        const nameParts = (data.user?.userName || '').split(' ');
+        const authenticatedUser: User = {
+          id: data.user?.userId || '',
+          firstName: nameParts[0] || 'User',
+          lastName: nameParts.slice(1).join(' ') || '',
+          email: data.user?.userEmail || email,
+          role: data.user?.userType || 'user',
+          type: data.user?.userType || 'user',
+          locationId: data.user?.locationId || '',
+          isAdmin: data.user?.isAdmin || false,
+        };
+        
+        setUser(authenticatedUser);
+        localStorage.setItem('userId', authenticatedUser.id);
+        localStorage.setItem('locationId', authenticatedUser.locationId);
+        localStorage.setItem('isAdmin', authenticatedUser.isAdmin ? 'true' : 'false');
+        
+        return true;
+      } else {
+        setError(data.error || 'Login failed');
+        return false;
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      setError('Login failed. Please try again.');
+      return false;
+    }
+  }, []);
 
   const checkAuth = useCallback(async () => {
     if (hasCheckedAuth.current) return;
@@ -229,6 +273,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isInIframe,
     isFromGHL,
     error,
+    login,
     logout,
     checkAuth,
     getUserId,
