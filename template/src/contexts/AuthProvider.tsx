@@ -3,21 +3,17 @@ import { useNavigate } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
-// ============================================
-// DEV MODE BYPASS - Set to false before deploying!
-// ============================================
 const DEV_BYPASS_AUTH = false;
 
-// ============================================
-// Types
-// ============================================
-
 interface User {
-  userId: string;
-  userEmail: string;
-  userName: string;
-  userType: string;
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: string;
+  type: string;
   locationId: string;
+  isAdmin?: boolean;
 }
 
 interface AuthContextType {
@@ -29,17 +25,10 @@ interface AuthContextType {
   error: string | null;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
+  getUserId: () => string | null;
 }
 
-// ============================================
-// Context
-// ============================================
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// ============================================
-// Helper Functions
-// ============================================
 
 const checkIsInIframe = (): boolean => {
   try {
@@ -55,10 +44,6 @@ const checkIsFromGHL = (): boolean => {
   return allowedDomains.some(domain => referrer.includes(domain));
 };
 
-// ============================================
-// Provider Component
-// ============================================
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -69,8 +54,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const navigate = useNavigate();
 
+  const getUserId = useCallback((): string | null => {
+    return user?.id || null;
+  }, [user]);
+
   const checkAuth = useCallback(async () => {
-    // Prevent multiple calls
     if (hasCheckedAuth.current) return;
     hasCheckedAuth.current = true;
 
@@ -78,73 +66,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       setError(null);
 
-      // ========== DEV BYPASS ==========
       if (DEV_BYPASS_AUTH) {
         const devUser: User = {
-          userId: 'dev-user-123',
-          userEmail: 'dev@leaddash.io',
-          userName: 'Dev User',
-          userType: 'account-admin',
+          id: 'dev-user-123',
+          firstName: 'Dev',
+          lastName: 'User',
+          email: 'dev@leaddash.io',
+          role: 'Agency Owner',
+          type: 'AGENCY-OWNER',
           locationId: 'puLPmzfdCvfQRANPM2WA',
+          isAdmin: true,
         };
-        
         setUser(devUser);
-        localStorage.setItem('userId', devUser.userId);
-        localStorage.setItem('userName', devUser.userName);
-        localStorage.setItem('userEmail', devUser.userEmail);
-        localStorage.setItem('userType', devUser.userType);
+        localStorage.setItem('userId', devUser.id);
         localStorage.setItem('locationId', devUser.locationId);
         localStorage.setItem('isAdmin', 'true');
-        
-        console.log('🔓 DEV MODE: Auth bypassed');
+        console.log('DEV MODE: Auth bypassed');
         setIsLoading(false);
         return;
       }
-      // ========== END DEV BYPASS ==========
 
-      // Check for SSO params in URL (from GHL iframe)
       const urlParams = new URLSearchParams(window.location.search);
       const isSsoRequest = urlParams.get('sso') === 'true';
       const locationId = urlParams.get('locationId');
       const userId = urlParams.get('userId');
-      const userName = urlParams.get('userName');
-      const userEmail = urlParams.get('userEmail');
-      const userType = urlParams.get('userType');
-      
-      // Also check for token in URL (from redirect flow)
       const tokenFromUrl = urlParams.get('token');
       let authToken = localStorage.getItem('authToken');
 
-      // Handle SSO request from GHL
       if (isSsoRequest && locationId && userId) {
-        console.log('🔐 SSO Request detected, calling backend...');
+        console.log('SSO Request detected, calling backend...');
         
         try {
-          const response = await fetch(`${API_URL}/api/auth/sso-login`, {
+          const response = await fetch(API_URL + '/api/auth/sso-login', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              locationId,
-              userId,
-              userName: userName || 'User',
-              userEmail: userEmail || '',
-              userType: userType || 'user',
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ locationId, userId }),
           });
           
           const data = await response.json();
-          console.log('📦 SSO Login response:', data);
+          console.log('SSO Login response:', data);
           
           if (data.success && data.token) {
             authToken = data.token;
             localStorage.setItem('authToken', data.token);
-            
-            // Clean up URL
             window.history.replaceState({}, '', window.location.pathname);
           } else {
-            console.log('❌ SSO Login failed:', data.error);
+            console.log('SSO Login failed:', data.error);
             setUser(null);
             setIsLoading(false);
             if (!window.location.pathname.includes('access-denied')) {
@@ -153,7 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return;
           }
         } catch (err) {
-          console.error('❌ SSO Login error:', err);
+          console.error('SSO Login error:', err);
           setUser(null);
           setIsLoading(false);
           if (!window.location.pathname.includes('access-denied')) {
@@ -163,16 +130,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
       
-      // Handle token from redirect flow
       if (tokenFromUrl && !authToken) {
-        console.log('🔑 Token found in URL');
+        console.log('Token found in URL');
         authToken = tokenFromUrl;
         localStorage.setItem('authToken', tokenFromUrl);
         window.history.replaceState({}, '', window.location.pathname);
       }
 
       if (!authToken) {
-        console.log('❌ No auth token available');
+        console.log('No auth token available');
         setUser(null);
         setIsLoading(false);
         if (!window.location.pathname.includes('access-denied')) {
@@ -181,47 +147,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      console.log('🔐 Verifying token with backend...');
+      console.log('Verifying token with backend...');
       
-      // Call /api/auth/me with the token
-      const response = await fetch(`${API_URL}/api/auth/me`, {
+      const response = await fetch(API_URL + '/api/auth/me', {
         headers: {
-          'Authorization': `Bearer ${authToken}`,
+          'Authorization': 'Bearer ' + authToken,
           'Content-Type': 'application/json',
         },
       });
 
       const data = await response.json();
-      console.log('📦 Auth response:', data);
+      console.log('Auth response:', data);
 
       if (data.authenticated && data.user) {
+        const nameParts = (data.user.userName || '').split(' ');
         const authenticatedUser: User = {
-          userId: data.user.userId || data.user.id,
-          userEmail: data.user.userEmail || data.user.email || '',
-          userName: data.user.userName || data.user.name || 'User',
-          userType: data.user.userType || data.user.role || 'user',
+          id: data.user.userId,
+          firstName: nameParts[0] || 'User',
+          lastName: nameParts.slice(1).join(' ') || '',
+          email: data.user.userEmail || '',
+          role: data.user.userType || 'user',
+          type: data.user.userType || 'user',
           locationId: data.user.locationId || '',
+          isAdmin: data.user.isAdmin || false,
         };
         
-        console.log('✅ User authenticated:', authenticatedUser.userName);
+        console.log('User authenticated:', authenticatedUser.firstName, authenticatedUser.lastName);
         
         setUser(authenticatedUser);
-        localStorage.setItem('userId', authenticatedUser.userId);
-        localStorage.setItem('userName', authenticatedUser.userName);
-        localStorage.setItem('userEmail', authenticatedUser.userEmail);
-        localStorage.setItem('userType', authenticatedUser.userType);
+        localStorage.setItem('userId', authenticatedUser.id);
         localStorage.setItem('locationId', authenticatedUser.locationId);
-        localStorage.setItem('isAdmin', authenticatedUser.userType === 'admin' ? 'true' : 'false');
+        localStorage.setItem('isAdmin', authenticatedUser.isAdmin ? 'true' : 'false');
       } else {
-        console.log('❌ Token invalid or expired');
+        console.log('Token invalid or expired');
         setUser(null);
         localStorage.removeItem('authToken');
-        localStorage.removeItem('userId');
-        localStorage.removeItem('userName');
-        localStorage.removeItem('userEmail');
-        localStorage.removeItem('userType');
-        localStorage.removeItem('locationId');
-        
         if (!window.location.pathname.includes('access-denied')) {
           navigate('/access-denied?reason=' + (data.reason || 'invalid_token'));
         }
@@ -238,9 +198,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = useCallback(async () => {
     try {
       const authToken = localStorage.getItem('authToken');
-      await fetch(`${API_URL}/api/auth/logout`, {
+      await fetch(API_URL + '/api/auth/logout', {
         method: 'POST',
-        headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+        headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {},
       });
     } catch (err) {
       console.error('Logout failed:', err);
@@ -249,11 +209,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     localStorage.removeItem('authToken');
     localStorage.removeItem('userId');
-    localStorage.removeItem('userName');
-    localStorage.removeItem('userEmail');
-    localStorage.removeItem('userType');
     localStorage.removeItem('locationId');
-
     navigate('/access-denied?reason=logged_out');
   }, [navigate]);
 
@@ -275,14 +231,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     error,
     logout,
     checkAuth,
+    getUserId,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
-
-// ============================================
-// Hook
-// ============================================
 
 export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
@@ -291,10 +244,6 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
-
-// ============================================
-// Protected Route Component
-// ============================================
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -314,7 +263,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     }
 
     if (!isLoading && isAuthenticated && allowedRoles && user) {
-      const userRole = user.userType?.toUpperCase().replace(/_/g, '-');
+      const userRole = user.type?.toUpperCase().replace(/_/g, '-');
       const hasRole = allowedRoles.some(role => 
         userRole.includes(role.toUpperCase().replace(/_/g, '-'))
       );
