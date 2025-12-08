@@ -10,7 +10,7 @@ import "./i18n";
 import ErrorBoundary from "./components/common-error-boundary/ErrorBoundary";
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { AuthProvider } from "./contexts/AuthContext";
+import { AuthProvider } from "./contexts/AuthProvider";
 
 // Essential CSS imports only
 import "bootstrap/dist/css/bootstrap.min.css";
