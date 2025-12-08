@@ -1,2 +1,1 @@
-export { AuthProvider, useAuth, ProtectedRoute } from './AuthProvider';
-export type { default } from './AuthProvider';
+export { useAuth, AuthProvider, ProtectedRoute } from './AuthProvider';
