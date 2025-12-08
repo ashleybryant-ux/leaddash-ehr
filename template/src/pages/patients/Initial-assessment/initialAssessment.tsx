@@ -238,7 +238,7 @@ const InitialAssessment = () => {
         therapist: {
           name: `${user?.firstName} ${user?.lastName}`,
           credentials: getCredentials(),
-          id: user?.id
+          id: user?.userId
         }
       };
 
@@ -268,7 +268,7 @@ const InitialAssessment = () => {
         therapist: {
           name: `${user?.firstName} ${user?.lastName}`,
           credentials: getCredentials(),
-          id: user?.id
+          id: user?.userId
         }
       };
 
@@ -316,7 +316,7 @@ const InitialAssessment = () => {
         therapist: {
           name: `${user?.firstName} ${user?.lastName}`,
           credentials: getCredentials(),
-          id: user?.id
+          id: user?.userId
         }
       };
 
