@@ -393,7 +393,8 @@ app.use(cors({
     'http://localhost:5173', 
     'http://localhost:3000', 
     'https://ehr.leaddash.io',
-    'https://app.leaddash.io'
+    'https://app.leaddash.io',
+    'https://main.d5oydskpw296o.amplifyapp.com'
   ],
   credentials: true
 }));
