@@ -23,7 +23,7 @@ interface AuthContextType {
   isInIframe: boolean;
   isFromGHL: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string) => Promise<boolean>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
   getUserId: () => string | null;
@@ -59,13 +59,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user?.id || null;
   }, [user]);
 
-  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
+  const login = useCallback(async (email: string): Promise<boolean> => {
     try {
       setError(null);
-      const response = await fetch(API_URL + '/api/auth/login', {
+      const response = await fetch(API_URL + '/api/auth/email-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email }),
       });
       
       const data = await response.json();
@@ -92,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         return true;
       } else {
-        setError(data.error || 'Login failed');
+        setError(data.error || 'Email not found');
         return false;
       }
     } catch (err) {
@@ -185,7 +185,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('No auth token available');
         setUser(null);
         setIsLoading(false);
-        if (!window.location.pathname.includes('access-denied')) {
+        if (!window.location.pathname.includes('access-denied') && !window.location.pathname.includes('login')) {
           navigate('/access-denied?reason=no_token');
         }
         return;
@@ -226,7 +226,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('Token invalid or expired');
         setUser(null);
         localStorage.removeItem('authToken');
-        if (!window.location.pathname.includes('access-denied')) {
+        if (!window.location.pathname.includes('access-denied') && !window.location.pathname.includes('login')) {
           navigate('/access-denied?reason=' + (data.reason || 'invalid_token'));
         }
       }
@@ -259,7 +259,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (window.location.pathname.includes('access-denied') || 
-        window.location.pathname.includes('/auth/sso')) {
+        window.location.pathname.includes('/auth/sso') ||
+        window.location.pathname.includes('login')) {
       setIsLoading(false);
       return;
     }

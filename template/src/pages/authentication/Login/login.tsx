@@ -6,22 +6,9 @@ import { useAuth } from "../../../contexts/AuthContext";
 const Login = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
-  const [formData, setFormData] = useState({
-    email: "",
-    password: ""
-  });
-  const [passwordVisibility, setPasswordVisibility] = useState(false);
+  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-    setError("");
-  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,17 +16,17 @@ const Login = () => {
     setError("");
 
     try {
-      console.log('🔐 Attempting login with:', formData.email);
-      const success = await login(formData.email, formData.password);
+      console.log('Attempting login with:', email);
+      const success = await login(email);
       
       if (success) {
-        console.log('✅ Login successful, redirecting to dashboard');
+        console.log('Login successful, redirecting to dashboard');
         navigate(all_routes.dashboard, { replace: true });
       } else {
-        setError('Invalid credentials. Please check your email and password.');
+        setError('Email not found. Please contact your administrator.');
       }
     } catch (err: any) {
-      console.error('❌ Login error:', err);
+      console.error('Login error:', err);
       setError(err.message || 'Login failed. Please try again.');
     } finally {
       setLoading(false);
@@ -73,13 +60,13 @@ const Login = () => {
               color: '#1a1a1a',
               marginBottom: '8px'
             }}>
-              LeadDash EMR
+              LeadDash EHR
             </h1>
             <p style={{
               fontSize: '16px',
               color: '#666'
             }}>
-              Sign in to your account
+              Enter your email to sign in
             </p>
           </div>
 
@@ -105,14 +92,13 @@ const Login = () => {
                 color: '#1a1a1a',
                 marginBottom: '8px'
               }}>
-                Email
+                Email Address
               </label>
               <input
                 type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                placeholder="info@leaddash.io"
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); setError(""); }}
+                placeholder="you@example.com"
                 required
                 disabled={loading}
                 style={{
@@ -128,60 +114,6 @@ const Login = () => {
                 onFocus={(e) => e.target.style.borderColor = '#667eea'}
                 onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
               />
-            </div>
-
-            <div style={{ marginBottom: '24px' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#1a1a1a',
-                marginBottom: '8px'
-              }}>
-                Password
-              </label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={passwordVisibility ? "text" : "password"}
-                  name="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  placeholder="Enter your password"
-                  required
-                  disabled={loading}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    paddingRight: '48px',
-                    fontSize: '16px',
-                    border: '2px solid #e0e0e0',
-                    borderRadius: '8px',
-                    outline: 'none',
-                    transition: 'border-color 0.3s',
-                    boxSizing: 'border-box'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = '#667eea'}
-                  onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
-                />
-                <button
-                  type="button"
-                  onClick={() => setPasswordVisibility(!passwordVisibility)}
-                  style={{
-                    position: 'absolute',
-                    right: '12px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    background: 'none',
-                    border: 'none',
-                    color: '#666',
-                    cursor: 'pointer',
-                    padding: '4px 8px',
-                    fontSize: '14px'
-                  }}
-                >
-                  {passwordVisibility ? '👁️' : '👁️‍🗨️'}
-                </button>
-              </div>
             </div>
 
             <button
@@ -203,7 +135,7 @@ const Login = () => {
               onMouseOver={(e) => !loading && (e.currentTarget.style.transform = 'translateY(-2px)')}
               onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
             >
-              {loading ? 'Signing In...' : 'Sign In'}
+              {loading ? 'Signing In...' : 'Continue'}
             </button>
           </form>
 
@@ -213,11 +145,10 @@ const Login = () => {
             backgroundColor: '#f0f8ff',
             borderRadius: '8px',
             fontSize: '13px',
-            color: '#666'
+            color: '#666',
+            textAlign: 'center'
           }}>
-            <strong>Demo Credentials:</strong><br />
-            Email: info@leaddash.io<br />
-            Password: password
+            Use the email associated with your LeadDash account.
           </div>
         </div>
       </div>
