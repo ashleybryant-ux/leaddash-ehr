@@ -1,0 +1,213 @@
+const express = require('express');
+const mysql = require('mysql2/promise');
+
+const app = express();
+const port = 4000;
+
+// Middleware to parse JSON
+app.use(express.json());
+
+// MySQL Connection Pool
+const pool = mysql.createPool({
+  host: 'leaddash-db.c9r7cjgzszbu.us-east-2.rds.amazonaws.com',
+  user: 'admin',
+  password: 'NGL8h@xQh$',
+  database: 'leaddash_db',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+// Health check endpoint
+app.get('/health', async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+    await connection.ping();
+    connection.release();
+    res.json({ 
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      database: 'connected'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'error',
+      message: error.message 
+    });
+  }
+});
+
+// Search patients by location
+app.get('/api/patients', async (req, res) => {
+  const { locationId } = req.query;
+
+  if (!locationId) {
+    return res.status(400).json({ 
+      error: 'locationId is required' 
+    });
+  }
+
+  try {
+    const [rows] = await pool.execute(
+      'SELECT * FROM patients WHERE ghl_location_id = ? ORDER BY created_at DESC',
+      [locationId]
+    );
+
+    res.json({
+      success: true,
+      count: rows.length,
+      patients: rows
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch patients',
+      message: error.message 
+    });
+  }
+});
+
+// Search patients by name, email, or phone
+app.get('/api/patients/search', async (req, res) => {
+  const { locationId, query } = req.query;
+
+  if (!locationId || !query) {
+    return res.status(400).json({ 
+      error: 'locationId and query are required' 
+    });
+  }
+
+  try {
+    const searchTerm = `%${query}%`;
+    const [rows] = await pool.execute(
+      `SELECT * FROM patients 
+       WHERE ghl_location_id = ? 
+       AND (
+         LOWER(first_name) LIKE LOWER(?) 
+         OR LOWER(last_name) LIKE LOWER(?)
+         OR LOWER(email) LIKE LOWER(?)
+         OR phone LIKE ?
+       )
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [locationId, searchTerm, searchTerm, searchTerm, searchTerm]
+    );
+
+    res.json({
+      success: true,
+      count: rows.length,
+      patients: rows
+    });
+  } catch (error) {
+    console.error('Search error:', error);
+    res.status(500).json({ 
+      error: 'Failed to search patients',
+      message: error.message 
+    });
+  }
+});
+
+// Get single patient by ID
+app.get('/api/patients/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const [rows] = await pool.execute(
+      'SELECT * FROM patients WHERE id = ?',
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ 
+        error: 'Patient not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      patient: rows[0]
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch patient',
+      message: error.message 
+    });
+  }
+});
+
+// Create new patient
+app.post('/api/patients', async (req, res) => {
+  const { 
+    ghl_contact_id, 
+    ghl_location_id, 
+    first_name, 
+    last_name, 
+    email, 
+    phone 
+  } = req.body;
+
+  if (!ghl_contact_id || !ghl_location_id || !first_name || !last_name) {
+    return res.status(400).json({ 
+      error: 'ghl_contact_id, ghl_location_id, first_name, and last_name are required' 
+    });
+  }
+
+  try {
+    const [result] = await pool.execute(
+      `INSERT INTO patients 
+       (ghl_contact_id, ghl_location_id, first_name, last_name, email, phone, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [ghl_contact_id, ghl_location_id, first_name, last_name, email, phone]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Patient created successfully',
+      patientId: result.insertId
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ 
+      error: 'Failed to create patient',
+      message: error.message 
+    });
+  }
+});
+
+// Update patient
+app.put('/api/patients/:id', async (req, res) => {
+  const { id } = req.params;
+  const { first_name, last_name, email, phone } = req.body;
+
+  try {
+    const [result] = await pool.execute(
+      `UPDATE patients 
+       SET first_name = ?, last_name = ?, email = ?, phone = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [first_name, last_name, email, phone, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ 
+        error: 'Patient not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Patient updated successfully'
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ 
+      error: 'Failed to update patient',
+      message: error.message 
+    });
+  }
+});
+
+// Start server
+app.listen(port, () => {
+  console.log(`LeadDash API server running on port ${port}`);
+});

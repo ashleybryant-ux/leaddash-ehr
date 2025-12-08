@@ -1,0 +1,95 @@
+require('dotenv').config();
+const express = require('express');
+const { Pool } = require('pg');
+
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+// NO CORS middleware - nginx handles it
+app.use(express.json());
+
+// Database connection pool
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('❌ Database connection failed:', err);
+  } else {
+    console.log('✅ Connected to AWS RDS PostgreSQL');
+  }
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/patients', async (req, res) => {
+  try {
+    const { locationId, userId, search } = req.query;
+
+    if (!locationId || !userId) {
+      return res.status(400).json({ 
+        error: 'Missing required authentication parameters',
+        message: 'locationId and userId are required for security'
+      });
+    }
+
+    console.log('🔍 Patient search request:', { locationId, userId, search });
+
+    const GHL_API_KEY = process.env.GHL_API_KEY;
+    
+    const response = await fetch(
+      `https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&query=${encodeURIComponent(search || '')}&tags=patient`,
+      {
+        headers: {
+          'Authorization': `Bearer ${GHL_API_KEY}`,
+          'Version': '2021-07-28',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      console.error('❌ GHL API error:', response.status);
+      return res.status(response.status).json({ error: 'Failed to fetch patients from GHL' });
+    }
+
+    const data = await response.json();
+    const contacts = data.contacts || [];
+
+    const patients = contacts.map(contact => ({
+      id: contact.id,
+      firstName: contact.firstName || '',
+      lastName: contact.lastName || '',
+      email: contact.email || '',
+      phone: contact.phone || '',
+      tags: contact.tags || []
+    }));
+
+    console.log(`✅ Found ${patients.length} patient(s) for user ${userId}`);
+
+    res.json({ patients, count: patients.length });
+
+  } catch (error) {
+    console.error('❌ Error fetching patients:', error);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: 'Failed to retrieve patient data'
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`\n✅ GHL Backend running on http://localhost:${PORT}`);
+  console.log(`📍 1 location(s) configured`);
+  console.log(`\n🔒 CORS handled by nginx\n`);
+});
