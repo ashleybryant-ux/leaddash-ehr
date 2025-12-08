@@ -42,6 +42,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [ghlDataReceived, setGhlDataReceived] = useState(false);
   const navigate = useNavigate();
 
   const saveUserToLocalStorage = (userData: User, token: string) => {
@@ -169,6 +170,67 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     navigate('/login');
   };
 
+  // Listen for GHL postMessage events
+  useEffect(() => {
+    let ghlUserId: string | null = null;
+    let ghlLocationId: string | null = null;
+    let ghlUserEmail: string | null = null;
+    let ghlUserName: string | null = null;
+
+    const handleGHLMessage = async (event: MessageEvent) => {
+      // Log all messages for debugging
+      if (event.data && typeof event.data === 'object') {
+        console.log('PostMessage received:', event.data);
+      }
+
+      // Handle GHL subscription messages
+      if (event.data?.module === 'auth' && event.data?.state) {
+        console.log('GHL Auth data received:', event.data.state);
+        const authState = event.data.state;
+        
+        if (authState.userId) ghlUserId = authState.userId;
+        if (authState.email) ghlUserEmail = authState.email;
+        if (authState.name) ghlUserName = authState.name;
+        if (authState.firstName && authState.lastName) {
+          ghlUserName = `${authState.firstName} ${authState.lastName}`;
+        }
+      }
+
+      if (event.data?.module === 'locations' && event.data?.state) {
+        console.log('GHL Location data received:', event.data.state);
+        const locState = event.data.state;
+        
+        if (locState.locationId) ghlLocationId = locState.locationId;
+        if (locState.id) ghlLocationId = locState.id;
+        if (locState.activeLocation?.id) ghlLocationId = locState.activeLocation.id;
+        if (locState.activeLocation?._id) ghlLocationId = locState.activeLocation._id;
+      }
+
+      // Try to authenticate once we have both userId and locationId
+      if (ghlUserId && ghlLocationId && !ghlDataReceived) {
+        console.log('GHL data complete, attempting SSO login:', { ghlUserId, ghlLocationId });
+        setGhlDataReceived(true);
+        
+        const success = await ssoLogin(ghlLocationId, ghlUserId);
+        if (success) {
+          console.log('GHL SSO login successful');
+          setIsLoading(false);
+          navigate('/dashboard');
+        } else {
+          console.log('GHL SSO failed, showing login');
+          setIsLoading(false);
+        }
+      }
+    };
+
+    window.addEventListener('message', handleGHLMessage);
+
+    return () => {
+      window.removeEventListener('message', handleGHLMessage);
+    };
+  }, [ghlDataReceived]);
+
+  // Initialize auth - check URL params and localStorage
   useEffect(() => {
     const initializeAuth = async () => {
       const urlParams = new URLSearchParams(window.location.search);
@@ -180,36 +242,35 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         ssoParam, 
         locationId, 
         userId,
-        currentPath: window.location.pathname 
+        currentPath: window.location.pathname,
+        search: window.location.search
       });
 
-      // SSO params present - auto-authenticate
+      // SSO params in URL - authenticate
       if (ssoParam === 'true' && locationId && userId) {
-        console.log('SSO params detected - authenticating...');
+        console.log('SSO params in URL - authenticating...');
         clearLocalStorage();
         
         const success = await ssoLogin(locationId, userId);
         
         if (success) {
-          // Clean URL after successful SSO
-          const newUrl = window.location.pathname;
-          window.history.replaceState({}, '', newUrl);
-          console.log('SSO complete, navigating to dashboard');
+          window.history.replaceState({}, '', window.location.pathname);
+          console.log('URL SSO complete, navigating to dashboard');
           navigate('/dashboard');
         } else {
-          console.error('SSO login failed, redirecting to login');
-          navigate('/login');
+          console.error('URL SSO login failed');
         }
         
         setIsLoading(false);
         return;
       }
 
-      // No SSO params - check for existing auth in localStorage
+      // Check localStorage for existing session
       const storedUserId = localStorage.getItem('userId');
       const authToken = localStorage.getItem('authToken');
+      const storedLocationId = localStorage.getItem('locationId');
       
-      if (storedUserId && authToken) {
+      if (storedUserId && authToken && storedLocationId) {
         const existingUser: User = {
           userId: storedUserId,
           userEmail: localStorage.getItem('userEmail') || '',
@@ -217,7 +278,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           firstName: (localStorage.getItem('userName') || 'User').split(' ')[0],
           lastName: (localStorage.getItem('userName') || '').split(' ').slice(1).join(' '),
           userType: localStorage.getItem('userType') || 'user',
-          locationId: localStorage.getItem('locationId') || '',
+          locationId: storedLocationId,
           isAdmin: localStorage.getItem('isAdmin') === 'true'
         };
         console.log('Found existing auth:', existingUser.userName);
@@ -226,13 +287,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return;
       }
 
-      // No auth - redirect to login
-      console.log('No auth found, redirecting to login');
-      if (!window.location.pathname.includes('/login')) {
-        navigate('/login');
-      }
+      // No auth found - wait briefly for GHL postMessage, then show login
+      console.log('No auth found, waiting for GHL postMessage...');
       
-      setIsLoading(false);
+      // Give GHL a moment to send postMessage data
+      setTimeout(() => {
+        if (!user && isLoading) {
+          console.log('No GHL data received, redirecting to login');
+          setIsLoading(false);
+          if (!window.location.pathname.includes('/login')) {
+            navigate('/login');
+          }
+        }
+      }, 2000);
     };
 
     initializeAuth();
