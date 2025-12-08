@@ -1,11 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { auditBillingView } from "../../services/auditService";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
-
-// DEV MODE - set to true to bypass authentication checks
-const DEV_MODE = false;
 
 interface Invoice {
   _id?: string;
@@ -29,8 +25,7 @@ interface Invoice {
   contactName?: string;
 }
 
-// Admin types that can access Billing
-const ADMIN_TYPES = ["account-admin", "agency-admin", "agency-owner"];
+const ADMIN_TYPES = ["account-admin", "agency-admin", "agency-owner", "agency_owner"];
 
 const BillingOverview: React.FC = () => {
   const navigate = useNavigate();
@@ -41,79 +36,38 @@ const BillingOverview: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [locationName, setLocationName] = useState<string>("");
-  
-  // Track if audit has been logged
-  const auditLogged = useRef(false);
 
-  // Check if user is admin based on their type
   useEffect(() => {
-    const checkAdminStatus = async () => {
-      // DEV MODE: Bypass authentication
-      if (DEV_MODE) {
-        console.log("🔓 DEV MODE: Auth bypassed in BillingOverview");
-        setIsAdmin(true);
-        setCheckingAuth(false);
-        return;
-      }
-
+    const checkAdminStatus = () => {
       try {
         const userId = localStorage.getItem("userId");
         const locationId = localStorage.getItem("locationId");
         const userType = localStorage.getItem("userType")?.toLowerCase() || "";
+        const isAdminFlag = localStorage.getItem("isAdmin") === "true";
 
         if (!userId || !locationId) {
           navigate("/login");
           return;
         }
 
-        const hasAdminAccess = ADMIN_TYPES.some(
+        const hasAdminAccess = isAdminFlag || ADMIN_TYPES.some(
           (adminType) =>
             userType === adminType ||
-            userType.includes(adminType.replace("-", ""))
+            userType.includes(adminType.replace("-", "")) ||
+            userType.includes(adminType.replace("_", ""))
         );
 
-        const response = await fetch(`${API_URL}/api/auth/check-role`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, locationId }),
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-          const backendType = (data.type || "").toLowerCase();
-          const backendHasAdminAccess = ADMIN_TYPES.some(
-            (adminType) =>
-              backendType === adminType ||
-              backendType.includes(adminType.replace("-", ""))
-          );
-
-          if (hasAdminAccess || backendHasAdminAccess || data.isAdmin) {
-            setIsAdmin(true);
-
-            try {
-              const locResponse = await fetch(
-                `${API_URL}/api/location/${locationId}`
-              );
-              const locData = await locResponse.json();
-              if (locData.success) {
-                setLocationName(locData.location.name);
-              }
-            } catch (err) {
-              console.error("Error fetching location:", err);
-            }
-          } else {
-            setIsAdmin(false);
-            navigate("/dashboard", {
-              state: {
-                message:
-                  "Access denied. Only administrators can view the Billing page.",
-              },
-            });
-          }
+        if (hasAdminAccess) {
+          setIsAdmin(true);
+          const userName = localStorage.getItem("userName") || "";
+          setLocationName(userName ? `${userName}'s Practice` : "Your Practice");
         } else {
           setIsAdmin(false);
-          navigate("/dashboard");
+          navigate("/dashboard", {
+            state: {
+              message: "Access denied. Only administrators can view the Billing page.",
+            },
+          });
         }
       } catch (err) {
         console.error("Error checking admin status:", err);
@@ -127,21 +81,21 @@ const BillingOverview: React.FC = () => {
     checkAdminStatus();
   }, [navigate]);
 
-  // Fetch invoices only if admin
   useEffect(() => {
     if (isAdmin !== true) return;
 
     const fetchInvoices = async () => {
       try {
         setLoading(true);
-        const locationId = localStorage.getItem("locationId") || "puLPmzfdCvfQRANPM2WA";
+        const locationId = localStorage.getItem("locationId") || "";
+        const authToken = localStorage.getItem("authToken") || "";
 
         const response = await fetch(
           `${API_URL}/api/ghl/invoices?locationId=${locationId}`,
           {
             headers: {
-              "x-location-id": locationId,
-              "x-user-id": localStorage.getItem("userId") || "",
+              "Authorization": `Bearer ${authToken}`,
+              "Content-Type": "application/json"
             },
           }
         );
@@ -151,12 +105,6 @@ const BillingOverview: React.FC = () => {
         if (data.success) {
           console.log("📊 Invoice data from GHL:", data.invoices);
           setInvoices(data.invoices || []);
-          
-          // Log audit event for viewing billing overview (only once)
-          if (!auditLogged.current) {
-            auditBillingView();
-            auditLogged.current = true;
-          }
         } else {
           setError(data.error || "Failed to load invoices");
         }
@@ -171,7 +119,6 @@ const BillingOverview: React.FC = () => {
     fetchInvoices();
   }, [isAdmin]);
 
-  // Loading state
   if (checkingAuth || isAdmin === null) {
     return (
       <div className="page-wrapper">
@@ -191,7 +138,6 @@ const BillingOverview: React.FC = () => {
     return null;
   }
 
-  // Date calculations
   const now = new Date();
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -199,15 +145,12 @@ const BillingOverview: React.FC = () => {
   const yearStart = new Date(now.getFullYear(), 0, 1);
 
   const getInvoiceDate = (invoice: Invoice): Date => {
-    const dateStr =
-      invoice.paidAt || invoice.updatedAt || invoice.createdAt || invoice.issueDate;
+    const dateStr = invoice.paidAt || invoice.updatedAt || invoice.createdAt || invoice.issueDate;
     return dateStr ? new Date(dateStr) : new Date(0);
   };
 
-  // Helper to get amount - GHL stores in DOLLARS, not cents
   const getAmount = (invoice: Invoice, field: 'total' | 'amountPaid' | 'amountDue'): number => {
-    const value = invoice[field] || 0;
-    return value;
+    return invoice[field] || 0;
   };
 
   const getBalance = (invoice: Invoice): number => {
@@ -217,23 +160,22 @@ const BillingOverview: React.FC = () => {
     return (invoice.total || 0) - (invoice.amountPaid || 0);
   };
 
-  // Income calculations - amounts already in dollars
   const paidInvoices = invoices.filter((inv) => inv.status === "paid");
 
   const thisMonthIncome = paidInvoices
     .filter((inv) => getInvoiceDate(inv) >= thisMonthStart)
-    .reduce((sum, inv) => sum + getAmount(inv, 'amountPaid') || getAmount(inv, 'total'), 0);
+    .reduce((sum, inv) => sum + (getAmount(inv, 'amountPaid') || getAmount(inv, 'total')), 0);
 
   const lastMonthIncome = paidInvoices
     .filter((inv) => {
       const date = getInvoiceDate(inv);
       return date >= lastMonthStart && date <= lastMonthEnd;
     })
-    .reduce((sum, inv) => sum + getAmount(inv, 'amountPaid') || getAmount(inv, 'total'), 0);
+    .reduce((sum, inv) => sum + (getAmount(inv, 'amountPaid') || getAmount(inv, 'total')), 0);
 
   const yearToDateIncome = paidInvoices
     .filter((inv) => getInvoiceDate(inv) >= yearStart)
-    .reduce((sum, inv) => sum + getAmount(inv, 'amountPaid') || getAmount(inv, 'total'), 0);
+    .reduce((sum, inv) => sum + (getAmount(inv, 'amountPaid') || getAmount(inv, 'total')), 0);
 
   const totalOutstanding = invoices
     .filter((inv) => inv.status !== "paid")
@@ -274,14 +216,11 @@ const BillingOverview: React.FC = () => {
   return (
     <div className="page-wrapper">
       <div className="content">
-        {/* Page Header */}
         <div className="d-flex justify-content-between align-items-center mb-4">
           <div>
             <h4 className="mb-1">Billing Overview</h4>
             <p className="text-muted mb-0">
-              {locationName
-                ? `Patient invoices for ${locationName}`
-                : "Patient invoices and payments"}
+              {locationName ? `Patient invoices for ${locationName}` : "Patient invoices and payments"}
             </p>
           </div>
           <span className="badge bg-primary px-3 py-2">
@@ -289,15 +228,12 @@ const BillingOverview: React.FC = () => {
           </span>
         </div>
 
-        {/* Info Alert */}
         <div className="alert alert-info mb-4">
           <i className="ti ti-info-circle me-2"></i>
-          <strong>Billing</strong> shows patient invoices and copay payments. For
-          insurance claims and ERA payments, visit the{" "}
+          <strong>Billing</strong> shows patient invoices and copay payments. For insurance claims and ERA payments, visit the{" "}
           <Link to="/insurance">Insurance</Link> page.
         </div>
 
-        {/* Income Summary Cards */}
         <div className="row mb-4">
           <div className="col-xl-3 col-sm-6">
             <div className="card">
@@ -333,7 +269,6 @@ const BillingOverview: React.FC = () => {
           </div>
         </div>
 
-        {/* Stats Row */}
         <div className="row mb-4">
           <div className="col-md-4">
             <div className="card bg-light">
@@ -361,7 +296,6 @@ const BillingOverview: React.FC = () => {
           </div>
         </div>
 
-        {/* Invoices Table Card */}
         <div className="card">
           <div className="card-header p-0 border-bottom">
             <ul className="nav nav-tabs nav-tabs-solid nav-justified">
@@ -418,10 +352,7 @@ const BillingOverview: React.FC = () => {
               <div className="text-center py-5">
                 <i className="ti ti-alert-circle fs-48 text-danger mb-3 d-block"></i>
                 <p className="text-danger">{error}</p>
-                <button
-                  className="btn btn-outline-primary btn-sm"
-                  onClick={() => window.location.reload()}
-                >
+                <button className="btn btn-outline-primary btn-sm" onClick={() => window.location.reload()}>
                   Retry
                 </button>
               </div>
@@ -456,22 +387,15 @@ const BillingOverview: React.FC = () => {
                       const total = getAmount(invoice, 'total');
                       const paid = getAmount(invoice, 'amountPaid');
                       const balance = getBalance(invoice);
-                      const patientId =
-                        invoice.contactDetails?.id || invoice.contactId;
-                      const patientName =
-                        invoice.contactDetails?.name ||
-                        invoice.contactName ||
-                        "Unknown";
+                      const patientId = invoice.contactDetails?.id || invoice.contactId;
+                      const patientName = invoice.contactDetails?.name || invoice.contactName || "Unknown";
                       const date = invoice.createdAt || invoice.issueDate;
 
                       return (
                         <tr key={invoiceId}>
                           <td>
                             {patientId ? (
-                              <Link
-                                to={`/patients/${patientId}`}
-                                className="text-primary fw-medium"
-                              >
+                              <Link to={`/patients/${patientId}`} className="text-primary fw-medium">
                                 {patientName}
                               </Link>
                             ) : (
@@ -480,13 +404,9 @@ const BillingOverview: React.FC = () => {
                           </td>
                           <td className="text-muted">{formatDate(date)}</td>
                           <td className="text-end">{formatCurrency(total)}</td>
-                          <td className="text-end text-success">
-                            {formatCurrency(paid)}
-                          </td>
+                          <td className="text-end text-success">{formatCurrency(paid)}</td>
                           <td className="text-end">
-                            <span
-                              className={balance > 0 ? "text-danger fw-bold" : ""}
-                            >
+                            <span className={balance > 0 ? "text-danger fw-bold" : ""}>
                               {formatCurrency(balance)}
                             </span>
                           </td>
@@ -522,10 +442,7 @@ const BillingOverview: React.FC = () => {
                               </Link>
                             )}
                             {invoice.status !== "paid" && (
-                              <button
-                                className="btn btn-sm btn-success"
-                                title="Record payment"
-                              >
+                              <button className="btn btn-sm btn-success" title="Record payment">
                                 <i className="ti ti-currency-dollar"></i>
                               </button>
                             )}
@@ -542,9 +459,7 @@ const BillingOverview: React.FC = () => {
             <div className="card-footer bg-white text-muted">
               <small>
                 Showing {filteredInvoices.length} of {invoices.length} invoices
-                {locationName && (
-                  <span className="float-end">Location: {locationName}</span>
-                )}
+                {locationName && <span className="float-end">Location: {locationName}</span>}
               </small>
             </div>
           )}
