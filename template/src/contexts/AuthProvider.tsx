@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
@@ -41,6 +42,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const navigate = useNavigate();
 
   const saveUserToLocalStorage = (userData: User, token: string) => {
     localStorage.setItem('authToken', token);
@@ -70,56 +72,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return user?.locationId || localStorage.getItem('locationId');
   };
 
-  const verifyToken = async (token: string): Promise<boolean> => {
-    try {
-      console.log('Verifying token with backend...');
-      const response = await fetch(`${API_URL}/api/auth/me`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Auth response:', data);
-        
-        if (data.authenticated && data.user) {
-          const nameParts = (data.user.userName || 'User').split(' ');
-          const firstName = nameParts[0] || 'User';
-          const lastName = nameParts.slice(1).join(' ') || '';
-          
-          const userData: User = {
-            userId: data.user.userId,
-            userEmail: data.user.userEmail,
-            userName: data.user.userName,
-            firstName: firstName,
-            lastName: lastName,
-            userType: data.user.userType,
-            locationId: data.user.locationId,
-            isAdmin: data.user.isAdmin
-          };
-          
-          console.log('User authenticated:', firstName, lastName);
-          setUser(userData);
-          saveUserToLocalStorage(userData, token);
-          return true;
-        }
-      }
-      
-      clearLocalStorage();
-      setUser(null);
-      return false;
-    } catch (error) {
-      console.error('Token verification failed:', error);
-      clearLocalStorage();
-      setUser(null);
-      return false;
+  const loadUserFromLocalStorage = (): User | null => {
+    const userId = localStorage.getItem('userId');
+    const authToken = localStorage.getItem('authToken');
+    
+    if (!userId || !authToken) {
+      return null;
     }
+
+    return {
+      userId: userId,
+      userEmail: localStorage.getItem('userEmail') || '',
+      userName: localStorage.getItem('userName') || 'User',
+      firstName: (localStorage.getItem('userName') || 'User').split(' ')[0],
+      lastName: (localStorage.getItem('userName') || '').split(' ').slice(1).join(' '),
+      userType: localStorage.getItem('userType') || 'user',
+      locationId: localStorage.getItem('locationId') || '',
+      isAdmin: localStorage.getItem('isAdmin') === 'true'
+    };
   };
 
   const ssoLogin = async (locationId: string, userId: string): Promise<boolean> => {
     try {
       console.log('SSO login attempt:', { locationId, userId });
+      
       const response = await fetch(`${API_URL}/api/auth/sso-login`, {
         method: 'POST',
         headers: {
@@ -129,6 +105,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       });
 
       const data = await response.json();
+      console.log('SSO login response:', data);
       
       if (data.success && data.token) {
         const nameParts = (data.user.userName || 'User').split(' ');
@@ -137,18 +114,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         const userData: User = {
           userId: data.user.userId,
-          userEmail: data.user.userEmail,
-          userName: data.user.userName,
+          userEmail: data.user.userEmail || '',
+          userName: data.user.userName || 'User',
           firstName: firstName,
           lastName: lastName,
-          userType: data.user.userType,
+          userType: data.user.userType || 'user',
           locationId: data.user.locationId,
-          isAdmin: data.user.isAdmin
+          isAdmin: data.user.isAdmin || false
         };
         
         saveUserToLocalStorage(userData, data.token);
         setUser(userData);
-        console.log('SSO login successful');
+        console.log('SSO login successful:', userData.userName);
         return true;
       }
       
@@ -160,40 +137,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  useEffect(() => {
-    const initializeAuth = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const ssoParam = urlParams.get('sso');
-      const locationId = urlParams.get('locationId');
-      const userId = urlParams.get('userId');
-
-      if (ssoParam === 'true' && locationId && userId) {
-        console.log('SSO login detected, authenticating...');
-        const success = await ssoLogin(locationId, userId);
-        if (success) {
-          urlParams.delete('sso');
-          urlParams.delete('locationId');
-          urlParams.delete('userId');
-          const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
-          window.history.replaceState({}, '', newUrl);
-        }
-        setIsLoading(false);
-        return;
-      }
-
-      const token = localStorage.getItem('authToken');
-      if (token) {
-        await verifyToken(token);
-      }
-      setIsLoading(false);
-    };
-
-    initializeAuth();
-  }, []);
-
   const login = async (email: string): Promise<boolean> => {
     try {
-      console.log('Attempting login with:', email);
+      console.log('Email login attempt:', email);
+      
       const response = await fetch(`${API_URL}/api/auth/email-login`, {
         method: 'POST',
         headers: {
@@ -203,6 +150,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       });
 
       const data = await response.json();
+      console.log('Email login response:', data);
       
       if (data.success && data.token) {
         const nameParts = (data.user.userName || 'User').split(' ');
@@ -211,33 +159,94 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         const userData: User = {
           userId: data.user.userId,
-          userEmail: data.user.userEmail,
-          userName: data.user.userName,
+          userEmail: data.user.userEmail || email,
+          userName: data.user.userName || 'User',
           firstName: firstName,
           lastName: lastName,
-          userType: data.user.userType,
+          userType: data.user.userType || 'user',
           locationId: data.user.locationId,
-          isAdmin: data.user.isAdmin
+          isAdmin: data.user.isAdmin || false
         };
         
         saveUserToLocalStorage(userData, data.token);
         setUser(userData);
-        console.log('Login successful, redirecting to dashboard');
+        console.log('Email login successful:', userData.userName);
         return true;
       }
       
-      console.error('Login failed:', data.error);
+      console.error('Email login failed:', data.error);
       return false;
     } catch (error) {
-      console.error('Login error:', error);
+      console.error('Email login error:', error);
       return false;
     }
   };
 
   const logout = () => {
+    console.log('Logging out...');
     clearLocalStorage();
     setUser(null);
+    navigate('/login');
   };
+
+  useEffect(() => {
+    const initializeAuth = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const ssoParam = urlParams.get('sso');
+      const locationId = urlParams.get('locationId');
+      const userId = urlParams.get('userId');
+
+      console.log('Auth initialization:', { 
+        ssoParam, 
+        locationId, 
+        userId,
+        currentPath: window.location.pathname 
+      });
+
+      // SSO params present - ALWAYS do fresh SSO login (clear old data first)
+      if (ssoParam === 'true' && locationId && userId) {
+        console.log('SSO params detected - clearing old auth and doing fresh login');
+        clearLocalStorage();
+        
+        const success = await ssoLogin(locationId, userId);
+        
+        if (success) {
+          // Clean URL after successful SSO
+          const newUrl = window.location.pathname;
+          window.history.replaceState({}, '', newUrl);
+          console.log('SSO complete, navigating to dashboard');
+          navigate('/dashboard');
+        } else {
+          console.error('SSO login failed, redirecting to login page');
+          navigate('/login');
+        }
+        
+        setIsLoading(false);
+        return;
+      }
+
+      // No SSO params - check for existing auth in localStorage
+      const existingUser = loadUserFromLocalStorage();
+      
+      if (existingUser) {
+        console.log('Found existing auth:', existingUser.userName);
+        setUser(existingUser);
+        setIsLoading(false);
+        return;
+      }
+
+      // No auth at all - redirect to login (unless already on login page)
+      console.log('No auth found');
+      if (!window.location.pathname.includes('/login')) {
+        console.log('Redirecting to login page');
+        navigate('/login');
+      }
+      
+      setIsLoading(false);
+    };
+
+    initializeAuth();
+  }, []);
 
   const value: AuthContextType = {
     user,
@@ -257,12 +266,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   );
 };
 
+// ProtectedRoute component
 interface ProtectedRouteProps {
   children: ReactNode;
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      navigate('/login');
+    }
+  }, [isLoading, isAuthenticated, navigate]);
 
   if (isLoading) {
     return (
@@ -275,7 +292,6 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   }
 
   if (!isAuthenticated) {
-    window.location.href = '/login';
     return null;
   }
 
