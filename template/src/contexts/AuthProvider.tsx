@@ -18,7 +18,8 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string) => Promise<boolean>;
+  isInIframe: boolean;
+  isAccessDenied: boolean;
   logout: () => void;
   ssoLogin: (locationId: string, userId: string) => Promise<boolean>;
   getUserId: () => string | null;
@@ -39,9 +40,39 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+// Check if running inside an iframe
+const checkIsInIframe = (): boolean => {
+  try {
+    return window.self !== window.top;
+  } catch (e) {
+    // If we can't access window.top due to cross-origin, we're in an iframe
+    return true;
+  }
+};
+
+// Check if the parent is from GHL/LeadDash domain
+const checkIsFromGHL = (): boolean => {
+  try {
+    const referrer = document.referrer.toLowerCase();
+    const validReferrers = [
+      'gohighlevel.com',
+      'highlevel.com', 
+      'leadconnectorhq.com',
+      'app.leaddash.io',
+      'leaddash.io'
+    ];
+    return validReferrers.some(domain => referrer.includes(domain));
+  } catch (e) {
+    return false;
+  }
+};
+
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isAccessDenied, setIsAccessDenied] = useState(false);
+  const [isInIframe] = useState<boolean>(checkIsInIframe());
+  const [isFromGHL] = useState<boolean>(checkIsFromGHL());
   const navigate = useNavigate();
 
   const saveUserToLocalStorage = (userData: User, token: string) => {
@@ -70,26 +101,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const getLocationId = (): string | null => {
     return user?.locationId || localStorage.getItem('locationId');
-  };
-
-  const loadUserFromLocalStorage = (): User | null => {
-    const userId = localStorage.getItem('userId');
-    const authToken = localStorage.getItem('authToken');
-    
-    if (!userId || !authToken) {
-      return null;
-    }
-
-    return {
-      userId: userId,
-      userEmail: localStorage.getItem('userEmail') || '',
-      userName: localStorage.getItem('userName') || 'User',
-      firstName: (localStorage.getItem('userName') || 'User').split(' ')[0],
-      lastName: (localStorage.getItem('userName') || '').split(' ').slice(1).join(' '),
-      userType: localStorage.getItem('userType') || 'user',
-      locationId: localStorage.getItem('locationId') || '',
-      isAdmin: localStorage.getItem('isAdmin') === 'true'
-    };
   };
 
   const ssoLogin = async (locationId: string, userId: string): Promise<boolean> => {
@@ -137,56 +148,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const login = async (email: string): Promise<boolean> => {
-    try {
-      console.log('Email login attempt:', email);
-      
-      const response = await fetch(`${API_URL}/api/auth/email-login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ email })
-      });
-
-      const data = await response.json();
-      console.log('Email login response:', data);
-      
-      if (data.success && data.token) {
-        const nameParts = (data.user.userName || 'User').split(' ');
-        const firstName = nameParts[0] || 'User';
-        const lastName = nameParts.slice(1).join(' ') || '';
-        
-        const userData: User = {
-          userId: data.user.userId,
-          userEmail: data.user.userEmail || email,
-          userName: data.user.userName || 'User',
-          firstName: firstName,
-          lastName: lastName,
-          userType: data.user.userType || 'user',
-          locationId: data.user.locationId,
-          isAdmin: data.user.isAdmin || false
-        };
-        
-        saveUserToLocalStorage(userData, data.token);
-        setUser(userData);
-        console.log('Email login successful:', userData.userName);
-        return true;
-      }
-      
-      console.error('Email login failed:', data.error);
-      return false;
-    } catch (error) {
-      console.error('Email login error:', error);
-      return false;
-    }
-  };
-
   const logout = () => {
     console.log('Logging out...');
     clearLocalStorage();
     setUser(null);
-    navigate('/login');
+    setIsAccessDenied(true);
   };
 
   useEffect(() => {
@@ -200,12 +166,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         ssoParam, 
         locationId, 
         userId,
+        isInIframe,
+        isFromGHL,
         currentPath: window.location.pathname 
       });
 
-      // SSO params present - ALWAYS do fresh SSO login (clear old data first)
+      // BLOCK: Not in iframe and not from GHL - deny access completely
+      if (!isInIframe && !isFromGHL) {
+        console.log('ACCESS DENIED: Direct browser access not allowed. Must access through LeadDash.');
+        clearLocalStorage();
+        setIsAccessDenied(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // In iframe or from GHL - check for SSO params
       if (ssoParam === 'true' && locationId && userId) {
-        console.log('SSO params detected - clearing old auth and doing fresh login');
+        console.log('SSO in iframe detected - auto-authenticating...');
         clearLocalStorage();
         
         const success = await ssoLogin(locationId, userId);
@@ -217,31 +194,38 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           console.log('SSO complete, navigating to dashboard');
           navigate('/dashboard');
         } else {
-          console.error('SSO login failed, redirecting to login page');
-          navigate('/login');
+          console.error('SSO login failed');
+          setIsAccessDenied(true);
         }
         
         setIsLoading(false);
         return;
       }
 
-      // No SSO params - check for existing auth in localStorage
-      const existingUser = loadUserFromLocalStorage();
+      // In iframe but no SSO params - check localStorage for existing session
+      const userId_stored = localStorage.getItem('userId');
+      const authToken = localStorage.getItem('authToken');
       
-      if (existingUser) {
-        console.log('Found existing auth:', existingUser.userName);
+      if (userId_stored && authToken) {
+        const existingUser: User = {
+          userId: userId_stored,
+          userEmail: localStorage.getItem('userEmail') || '',
+          userName: localStorage.getItem('userName') || 'User',
+          firstName: (localStorage.getItem('userName') || 'User').split(' ')[0],
+          lastName: (localStorage.getItem('userName') || '').split(' ').slice(1).join(' '),
+          userType: localStorage.getItem('userType') || 'user',
+          locationId: localStorage.getItem('locationId') || '',
+          isAdmin: localStorage.getItem('isAdmin') === 'true'
+        };
+        console.log('Found existing auth in iframe:', existingUser.userName);
         setUser(existingUser);
         setIsLoading(false);
         return;
       }
 
-      // No auth at all - redirect to login (unless already on login page)
-      console.log('No auth found');
-      if (!window.location.pathname.includes('/login')) {
-        console.log('Redirecting to login page');
-        navigate('/login');
-      }
-      
+      // In iframe but no auth - deny access
+      console.log('In iframe but no valid SSO params or session');
+      setIsAccessDenied(true);
       setIsLoading(false);
     };
 
@@ -252,12 +236,70 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     user,
     isAuthenticated: !!user,
     isLoading,
-    login,
+    isInIframe,
+    isAccessDenied,
     logout,
     ssoLogin,
     getUserId,
     getLocationId
   };
+
+  // Show access denied screen if not accessed through GHL
+  if (isAccessDenied) {
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100vh',
+        backgroundColor: '#f8f9fa',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        padding: '20px',
+        textAlign: 'center'
+      }}>
+        <div style={{
+          backgroundColor: 'white',
+          padding: '48px',
+          borderRadius: '12px',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.1)',
+          maxWidth: '480px'
+        }}>
+          <div style={{ fontSize: '64px', marginBottom: '24px' }}>🔒</div>
+          <h1 style={{ 
+            color: '#155F3C', 
+            fontSize: '28px', 
+            marginBottom: '16px',
+            fontWeight: '600'
+          }}>
+            Access Restricted
+          </h1>
+          <p style={{ 
+            color: '#666', 
+            fontSize: '16px', 
+            lineHeight: '1.6',
+            marginBottom: '24px'
+          }}>
+            LeadDash Health must be accessed through your LeadDash account for HIPAA compliance.
+          </p>
+          <p style={{ 
+            color: '#888', 
+            fontSize: '14px',
+            lineHeight: '1.5'
+          }}>
+            Please log in to <strong>app.leaddash.io</strong> and access the Health EMR from the menu.
+          </p>
+        </div>
+        <p style={{ 
+          color: '#aaa', 
+          fontSize: '12px', 
+          marginTop: '32px' 
+        }}>
+          © 2025 LeadDash Health | HIPAA Compliant
+        </p>
+      </div>
+    );
+  }
 
   return (
     <AuthContext.Provider value={value}>
@@ -272,14 +314,7 @@ interface ProtectedRouteProps {
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      navigate('/login');
-    }
-  }, [isLoading, isAuthenticated, navigate]);
+  const { isAuthenticated, isLoading, isAccessDenied } = useAuth();
 
   if (isLoading) {
     return (
@@ -291,8 +326,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     );
   }
 
-  if (!isAuthenticated) {
-    return null;
+  if (isAccessDenied || !isAuthenticated) {
+    return null; // Access denied screen is shown by AuthProvider
   }
 
   return <>{children}</>;
