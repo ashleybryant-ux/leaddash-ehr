@@ -11,6 +11,7 @@ import ErrorBoundary from "./components/common-error-boundary/ErrorBoundary";
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthProvider";
+import axios from "axios";
 
 // Essential CSS imports only
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -22,6 +23,20 @@ import "../src/assets/scss/custom.scss";
 // @ts-ignore
 import * as bootstrap from "bootstrap/dist/js/bootstrap.bundle.min.js";
 (window as any).bootstrap = bootstrap;
+
+// Global axios interceptor - adds auth token to ALL requests
+axios.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
 function GlobalTooltipInit() {
   const location = useLocation();
