@@ -4,6 +4,7 @@ import { authRoutes, publicRoutes } from "./router.link";
 import Feature from "../layouts/feature";
 import AuthFeature from "../layouts/authFeature";
 import AuthProvider from "../contexts/AuthProvider";
+import OAuthCallback from "../pages/OAuthCallback";
 
 const ALLRoutes: React.FC = () => {
   return (
@@ -11,7 +12,10 @@ const ALLRoutes: React.FC = () => {
       <Routes>
         {/* Default redirect to dashboard */}
         <Route path="/" element={<Navigate to="/index" replace />} />
-        
+
+        {/* OAuth Callback - handles ?sid= parameter from GHL OAuth */}
+        <Route path="/dashboard" element={<OAuthCallback />} />
+
         {/* Public Routes - with main layout */}
         <Route element={<Feature />}>
           {publicRoutes.map((route, idx) => (

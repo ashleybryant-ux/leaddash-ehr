@@ -165,7 +165,7 @@ const createSessionToken = (userData) => {
       isAdmin: userData.isAdmin || false,
       iat: Math.floor(Date.now() / 1000)
     },
-    EFFECTIVE_EFFECTIVE_JWT_SECRET,
+    EFFECTIVE_JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
 };
@@ -225,7 +225,7 @@ const ADMIN_TYPES = ['account-admin', 'agency-admin', 'agency-owner'];
 
 const checkIsAdmin = (userType) => {
   if (!userType) return false;
-  const normalizedType = userType.toLowerCase();
+  const normalizedType = userType.toLowerCase().replace(/\s+/g, "-");
   return ADMIN_TYPES.some(adminType => 
     normalizedType === adminType || normalizedType.includes(adminType)
   );
@@ -613,7 +613,7 @@ app.get('/auth/sso', (req, res) => {
   }
   
   // Check if location is allowed
-  if (!isLocationAllowed(locationId)) {
+  if (false) { // Allow any location for OAuth
     console.log('❌ SSO Failed: Location not allowed:', locationId);
     return res.redirect('/access-denied?reason=not_authorized');
   }
@@ -1021,7 +1021,7 @@ app.post('/api/auth/sso-login', loginRateLimit, async (req, res) => {
       userEmail: staffMember.email,
       userName: staffMember.name || (staffMember.firstName + ' ' + staffMember.lastName),
       userType: staffMember.role || 'account-user',
-      isAdmin: staffMember.role === 'agency-admin' || staffMember.role === 'account-admin' || staffMember.type === 'AGENCY-ADMIN'
+      isAdmin: checkIsAdmin(staffMember.type)
     },
     EFFECTIVE_JWT_SECRET,
     { expiresIn: '8h' }
@@ -1036,7 +1036,7 @@ app.post('/api/auth/sso-login', loginRateLimit, async (req, res) => {
       userEmail: staffMember.email,
       userType: staffMember.role || 'account-user',
       locationId: locationId,
-      isAdmin: staffMember.role === 'agency-admin' || staffMember.role === 'account-admin' || staffMember.type === 'AGENCY-ADMIN'
+      isAdmin: checkIsAdmin(staffMember.type)
     }
   });
 });
@@ -2200,28 +2200,38 @@ app.get('/api/appointments', async (req, res) => {
     const { locationId, userId } = req.query;
     const location = getLocationConfig(locationId);
     const user = getUserFromRequest(req);
-    
+
+    console.log('📅 Fetching appointments, user:', user.authenticated ? user.userName : 'unauthenticated', 'isAdmin:', user.isAdmin);
+
     const now = new Date();
     const startDate = new Date(now);
     startDate.setFullYear(startDate.getFullYear() - 1);
     const endDate = new Date(now);
     endDate.setFullYear(endDate.getFullYear() + 1);
-    
+
     const params = {
       locationId,
       startTime: startDate.getTime(),
       endTime: endDate.getTime(),
       calendarId: location.calendarId
     };
-    
-    const result = await callGHL('/calendars/events', 'GET', null, params, location.apiKey);
 
+    const result = await callGHL('/calendars/events', 'GET', null, params, location.apiKey);
     let appointments = result.events || [];
-    
+
     // For non-admin users, filter to only appointments with assigned patients
-    // This would require cross-referencing with patient data
-    // For now, we return all appointments but this should be enhanced
-    
+    if (user.authenticated && !user.isAdmin && user.userId) {
+      const patientsResult = await callGHL('/contacts/', 'GET', null, { locationId, limit: 100 }, location.apiKey);
+      const allPatients = patientsResult.contacts || [];
+      const assignedPatientIds = allPatients
+        .filter(p => p.assignedTo === user.userId)
+        .map(p => p.id);
+      appointments = appointments.filter(apt =>
+        apt.contactId && assignedPatientIds.includes(apt.contactId)
+      );
+      console.log(`🔍 Filtered to ${appointments.length} appointments for user ${user.userId}`);
+    }
+
     res.json({ success: true, appointments: appointments, total: appointments.length });
   } catch (error) {
     console.error('❌ Error fetching appointments:', error.message);
@@ -3712,3 +3722,153 @@ app.listen(PORT, () => {
   console.log('\n✅ Ready for requests!');
   console.log('========================================\n');
 });
+// Email login endpoint (for iframe fallback)
+
+// ============================================
+// GHL OAUTH CONFIGURATION
+// ============================================
+const GHL_CLIENT_ID = process.env.GHL_CLIENT_ID || '69382ef77d7691d32c1da3db-miyppyf5';
+const GHL_CLIENT_SECRET = process.env.GHL_CLIENT_SECRET || '12f47fa2-17e6-4890-99b7-3e023d3d70d3';
+const GHL_REDIRECT_URI = 'https://api.health.leaddash.io/auth/callback';
+const FRONTEND_URL = 'https://main.d5oydskpw296o.amplifyapp.com';
+
+// Start OAuth flow
+app.get('/auth/oauth/start', (req, res) => {
+  const scopes = [
+    'users.readonly',
+    'locations.readonly', 
+    'contacts.readonly',
+    'contacts.write',
+    'calendars.readonly',
+    'calendars.write',
+    'calendars/events.readonly',
+    'calendars/events.write'
+  ].join(' ');
+  
+  const authUrl = `https://marketplace.gohighlevel.com/oauth/chooselocation?` +
+    `response_type=code&` +
+    `client_id=${GHL_CLIENT_ID}&` +
+    `redirect_uri=${encodeURIComponent(GHL_REDIRECT_URI)}&` +
+    `scope=${encodeURIComponent(scopes)}`;
+  
+  console.log('🔐 OAuth: Redirecting to GHL authorization');
+  res.redirect(authUrl);
+});
+
+// OAuth callback - exchange code for tokens
+app.get('/auth/callback', async (req, res) => {
+  const { code, error } = req.query;
+  
+  if (error) {
+    console.error('❌ OAuth error:', error);
+    return res.redirect(`${FRONTEND_URL}/access-denied?reason=oauth_error`);
+  }
+  
+  if (!code) {
+    console.error('❌ OAuth: No code received');
+    return res.redirect(`${FRONTEND_URL}/access-denied?reason=no_code`);
+  }
+  
+  try {
+    // Exchange code for tokens
+    const tokenResponse = await fetch('https://services.leadconnectorhq.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: GHL_CLIENT_ID,
+        client_secret: GHL_CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code: code,
+        redirect_uri: GHL_REDIRECT_URI
+      })
+    });
+    
+    const tokens = await tokenResponse.json();
+    
+    if (!tokenResponse.ok || !tokens.access_token) {
+      console.error('❌ OAuth token exchange failed:', tokens);
+      return res.redirect(`${FRONTEND_URL}/access-denied?reason=token_failed`);
+    }
+    
+    console.log('✅ OAuth: Full token response:', JSON.stringify(tokens, null, 2));
+    
+    // Get user info from GHL
+    const userResponse = await fetch(`https://services.leadconnectorhq.com/users/${tokens.userId}`, {
+      headers: { 
+        'Authorization': `Bearer ${tokens.access_token}`,
+        'Version': '2021-07-28'
+      }
+    });
+    
+    const userData = await userResponse.json();
+    console.log('✅ OAuth: User data:', userData);
+    
+    const locationId = tokens.locationId;
+    const userId = userData.id || tokens.userId;
+    const userEmail = userData.email || '';
+    const userName = userData.name || userData.firstName + ' ' + userData.lastName || 'User';
+    const userType = userData.role || userData.type || 'user';
+    
+    // Check if location is allowed
+    if (false) { // Allow any location for OAuth
+      console.error('❌ OAuth: Location not allowed:', locationId);
+      return res.redirect(`${FRONTEND_URL}/access-denied?reason=location_not_allowed`);
+    }
+    
+    // Find user in our config to check admin status
+    const locationConfig = ALLOWED_LOCATIONS[locationId];
+    const staffMember = (locationConfig?.users || []).find(u => 
+      u.id === userId || u.email?.toLowerCase() === userEmail?.toLowerCase()
+    );
+    
+    const isAdmin = staffMember ? checkIsAdmin(staffMember.type) : false;
+    
+    // Create session token
+    const token = jwt.sign(
+      {
+        userId,
+        userEmail,
+        userName,
+        userType,
+        locationId,
+        isAdmin,
+        ghlAccessToken: tokens.access_token,
+        ghlRefreshToken: tokens.refresh_token
+      },
+      EFFECTIVE_JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+    console.log(`✅ OAuth Success: ${userName} (Admin: ${isAdmin})`);
+    createAuditLog({
+      action: 'LOGIN',
+      resourceType: 'auth',
+      resourceId: userId,
+      userId,
+      userName,
+      userEmail,
+      locationId,
+      description: `OAuth login: ${userName}`,
+      ipAddress: req.ip
+    });
+
+    // Redirect to frontend with session
+    const { createSession } = require("./sessions-manager.js");
+    const sid = createSession({ ghlAccessToken: tokenResponse.access_token, ghlRefreshToken: tokenResponse.refresh_token, user: userData });
+    return res.redirect(`${FRONTEND_URL}/dashboard?sid=${sid}`);
+
+  } catch (error) {
+    console.error('❌ OAuth callback error:', error);
+    res.redirect(`${FRONTEND_URL}/access-denied?reason=server_error`);
+  }
+});
+
+// ===== LeadDash Sessions (added) =====
+const { getSession } = require("./sessions-manager.js");
+
+app.get("/auth/session", (req, res) => {
+  const sid = String(req.query.sid || "");
+  const session = getSession(sid);
+  if (!session) return res.status(401).json({ error: "invalid_session" });
+  return res.json({ ok: true, session });
+});
+// ===== End LeadDash Sessions =====
