@@ -73,10 +73,53 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return user?.locationId || localStorage.getItem('locationId');
   };
 
+  // NEW: Exchange sid for session data
+  const exchangeSid = async (sid: string): Promise<boolean> => {
+    try {
+      console.log('Exchanging sid for session:', sid);
+      
+      const response = await fetch(`${API_URL}/api/session/${sid}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('Session exchange response:', data);
+
+      if (data.ok && data.locationId) {
+        // We have session data - now get full user info or construct from session
+        const userData: User = {
+          userId: data.userId || data.user?.userId || 'unknown',
+          userEmail: data.userEmail || data.user?.email || '',
+          userName: data.userName || data.user?.name || 'User',
+          firstName: (data.userName || data.user?.name || 'User').split(' ')[0],
+          lastName: (data.userName || data.user?.name || '').split(' ').slice(1).join(' '),
+          userType: data.userType || 'user',
+          locationId: data.locationId,
+          isAdmin: data.isAdmin || data.user?.isAdmin || false
+        };
+
+        // Store the sid as the auth token for API calls
+        saveUserToLocalStorage(userData, sid);
+        setUser(userData);
+        console.log('SID exchange successful:', userData.userName);
+        return true;
+      }
+
+      console.error('SID exchange failed:', data.error);
+      return false;
+    } catch (error) {
+      console.error('SID exchange error:', error);
+      return false;
+    }
+  };
+
   const ssoLogin = async (locationId: string, userId: string): Promise<boolean> => {
     try {
       console.log('SSO login attempt:', { locationId, userId });
-      
+
       const response = await fetch(`${API_URL}/api/auth/sso-login`, {
         method: 'POST',
         headers: {
@@ -87,12 +130,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       const data = await response.json();
       console.log('SSO login response:', data);
-      
+
       if (data.success && data.token) {
         const nameParts = (data.user.userName || 'User').split(' ');
         const firstName = nameParts[0] || 'User';
         const lastName = nameParts.slice(1).join(' ') || '';
-        
+
         const userData: User = {
           userId: data.user.userId,
           userEmail: data.user.userEmail || '',
@@ -103,13 +146,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           locationId: data.user.locationId,
           isAdmin: data.user.isAdmin || false
         };
-        
+
         saveUserToLocalStorage(userData, data.token);
         setUser(userData);
         console.log('SSO login successful:', userData.userName);
         return true;
       }
-      
+
       console.error('SSO login failed:', data.error);
       return false;
     } catch (error) {
@@ -121,7 +164,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string): Promise<boolean> => {
     try {
       console.log('Email login attempt:', email);
-      
+
       const response = await fetch(`${API_URL}/api/auth/email-login`, {
         method: 'POST',
         headers: {
@@ -132,12 +175,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       const data = await response.json();
       console.log('Email login response:', data);
-      
+
       if (data.success && data.token) {
         const nameParts = (data.user.userName || 'User').split(' ');
         const firstName = nameParts[0] || 'User';
         const lastName = nameParts.slice(1).join(' ') || '';
-        
+
         const userData: User = {
           userId: data.user.userId,
           userEmail: data.user.userEmail || email,
@@ -148,13 +191,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           locationId: data.user.locationId,
           isAdmin: data.user.isAdmin || false
         };
-        
+
         saveUserToLocalStorage(userData, data.token);
         setUser(userData);
         console.log('Email login successful:', userData.userName);
         return true;
       }
-      
+
       console.error('Email login failed:', data.error);
       return false;
     } catch (error) {
@@ -187,7 +230,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (event.data?.module === 'auth' && event.data?.state) {
         console.log('GHL Auth data received:', event.data.state);
         const authState = event.data.state;
-        
+
         if (authState.userId) ghlUserId = authState.userId;
         if (authState.email) ghlUserEmail = authState.email;
         if (authState.name) ghlUserName = authState.name;
@@ -199,7 +242,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (event.data?.module === 'locations' && event.data?.state) {
         console.log('GHL Location data received:', event.data.state);
         const locState = event.data.state;
-        
+
         if (locState.locationId) ghlLocationId = locState.locationId;
         if (locState.id) ghlLocationId = locState.id;
         if (locState.activeLocation?.id) ghlLocationId = locState.activeLocation.id;
@@ -210,7 +253,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (ghlUserId && ghlLocationId && !ghlDataReceived) {
         console.log('GHL data complete, attempting SSO login:', { ghlUserId, ghlLocationId });
         setGhlDataReceived(true);
-        
+
         const success = await ssoLogin(ghlLocationId, ghlUserId);
         if (success) {
           console.log('GHL SSO login successful');
@@ -237,22 +280,42 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const ssoParam = urlParams.get('sso');
       const locationId = urlParams.get('locationId');
       const userId = urlParams.get('userId');
+      const sid = urlParams.get('sid'); // NEW: Check for sid parameter
 
-      console.log('Auth initialization:', { 
-        ssoParam, 
-        locationId, 
+      console.log('Auth initialization:', {
+        ssoParam,
+        locationId,
         userId,
+        sid,
         currentPath: window.location.pathname,
         search: window.location.search
       });
+
+      // NEW: Check for sid parameter first (OAuth flow)
+      if (sid) {
+        console.log('SID found in URL - exchanging for session...');
+        const success = await exchangeSid(sid);
+        
+        if (success) {
+          // Clean the URL but stay on current page
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, '', cleanUrl);
+          console.log('SID exchange complete, user authenticated');
+          setIsLoading(false);
+          return;
+        } else {
+          console.error('SID exchange failed - session may have expired');
+          // Don't redirect immediately - check localStorage next
+        }
+      }
 
       // SSO params in URL - authenticate
       if (ssoParam === 'true' && locationId && userId) {
         console.log('SSO params in URL - authenticating...');
         clearLocalStorage();
-        
+
         const success = await ssoLogin(locationId, userId);
-        
+
         if (success) {
           window.history.replaceState({}, '', window.location.pathname);
           console.log('URL SSO complete, navigating to dashboard');
@@ -260,7 +323,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         } else {
           console.error('URL SSO login failed');
         }
-        
+
         setIsLoading(false);
         return;
       }
@@ -269,7 +332,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const storedUserId = localStorage.getItem('userId');
       const authToken = localStorage.getItem('authToken');
       const storedLocationId = localStorage.getItem('locationId');
-      
+
       if (storedUserId && authToken && storedLocationId) {
         const existingUser: User = {
           userId: storedUserId,
@@ -289,17 +352,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       // No auth found - wait briefly for GHL postMessage, then show login
       console.log('No auth found, waiting for GHL postMessage...');
-      
+
       // Give GHL a moment to send postMessage data
       setTimeout(() => {
         if (!user && isLoading) {
           console.log('No GHL data received, redirecting to login');
           setIsLoading(false);
-          if (!window.location.pathname.includes('/login')) {
+          if (!window.location.pathname.includes('/login') && !window.location.pathname.includes('/oauth')) {
             navigate('/login');
           }
         }
-      }, 2000);
+      }, 3000); // Increased to 3 seconds
     };
 
     initializeAuth();
@@ -333,7 +396,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    // Don't redirect if we're still loading or if there's a sid in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const hasSid = urlParams.has('sid');
+    
+    if (!isLoading && !isAuthenticated && !hasSid) {
       navigate('/login');
     }
   }, [isLoading, isAuthenticated, navigate]);
@@ -349,6 +416,17 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   }
 
   if (!isAuthenticated) {
+    // Check for sid before returning null
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('sid')) {
+      return (
+        <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
+          <div className="spinner-border text-primary" role="status">
+            <span className="visually-hidden">Authenticating...</span>
+          </div>
+        </div>
+      );
+    }
     return null;
   }
 
